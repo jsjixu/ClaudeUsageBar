@@ -6,6 +6,8 @@ struct PopoverView: View {
     let onRefresh: () -> Void
     let onQuit: () -> Void
 
+    @State private var launchAtLogin = LaunchAtLogin.isEnabled
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header
@@ -48,6 +50,17 @@ struct PopoverView: View {
             }
 
             Divider()
+
+            // Launch at Login toggle
+            Toggle(isOn: $launchAtLogin) {
+                Label("Launch at Login", systemImage: "power")
+                    .font(.caption)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .onChange(of: launchAtLogin) { _, newValue in
+                LaunchAtLogin.setEnabled(newValue)
+            }
 
             // Footer
             HStack {

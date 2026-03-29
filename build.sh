@@ -18,6 +18,7 @@ swiftc -o "$BINARY_NAME" \
   -parse-as-library \
   Sources/UsageModel.swift \
   Sources/OAuthManager.swift \
+  Sources/LaunchAtLogin.swift \
   Sources/UsageAPI.swift \
   Sources/PopoverView.swift \
   Sources/AppDelegate.swift \
