@@ -1,5 +1,18 @@
 import Foundation
 
+/// URLSession delegate that accepts self-signed certificates for CDP bridge
+class SelfSignedCertDelegate: NSObject, URLSessionDelegate {
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+           let trust = challenge.protectionSpace.serverTrust {
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
+    }
+}
+
 class CDPCookieManager {
     private var cachedCookies: String?
     private var cacheTime: Date?
@@ -8,6 +21,11 @@ class CDPCookieManager {
     // Persistent background tab for session keep-alive
     private var persistentTargetId: String?
     private var persistentSessionId: String?
+
+    // URLSession that accepts self-signed certs (for remote HTTPS bridge)
+    private lazy var trustingSession: URLSession = {
+        URLSession(configuration: .default, delegate: SelfSignedCertDelegate(), delegateQueue: nil)
+    }()
 
     static var cdpHost: String {
         let saved = UserDefaults.standard.string(forKey: "cdp_host") ?? ""
@@ -18,6 +36,16 @@ class CDPCookieManager {
         let saved = UserDefaults.standard.integer(forKey: "cdp_port")
         return saved > 0 ? saved : 9222
     }
+
+    /// Whether we're connecting to a remote host (needs HTTPS)
+    private static var isRemote: Bool {
+        let h = cdpHost
+        return h != "127.0.0.1" && h != "localhost"
+    }
+
+    /// URL scheme based on local vs remote
+    private static var httpScheme: String { isRemote ? "https" : "http" }
+    private static var wsScheme: String { isRemote ? "wss" : "ws" }
 
     func invalidateCache() {
         // Close the old persistent tab if it exists
@@ -34,10 +62,11 @@ class CDPCookieManager {
         persistentSessionId = nil
     }
 
-    /// Close a CDP target by ID via HTTP endpoint
+    /// Close a CDP target by ID via HTTP(S) endpoint
     private func closePersistentTab(host: String, port: Int, targetId: String) async {
-        guard let url = URL(string: "http://\(host):\(port)/json/close/\(targetId)") else { return }
-        _ = try? await URLSession.shared.data(from: url)
+        let scheme = CDPCookieManager.httpScheme
+        guard let url = URL(string: "\(scheme)://\(host):\(port)/json/close/\(targetId)") else { return }
+        _ = try? await trustingSession.data(from: url)
     }
 
     func fetchCookies() async throws -> String {
@@ -49,22 +78,24 @@ class CDPCookieManager {
 
         let host = CDPCookieManager.cdpHost
         let port = CDPCookieManager.cdpPort
+        let scheme = CDPCookieManager.httpScheme
 
         // Get browser-level WS endpoint
-        let versionURL = URL(string: "http://\(host):\(port)/json/version")!
-        let (data, _) = try await URLSession.shared.data(from: versionURL)
+        let versionURL = URL(string: "\(scheme)://\(host):\(port)/json/version")!
+        let (data, _) = try await trustingSession.data(from: versionURL)
 
         guard let versionInfo = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let browserWS = versionInfo["webSocketDebuggerUrl"] as? String else {
             throw CDPError.invalidResponse
         }
 
-        // Rewrite WS URL — remote CDP returns ws://127.0.0.1:9222/... but we need actual host:port
+        // Rewrite WS URL — remote CDP returns ws://127.0.0.1:9222/... but we need wss://host:port/...
         let rewrittenWS: String
-        if host != "127.0.0.1" && host != "localhost" {
+        if CDPCookieManager.isRemote {
+            let wsScheme = CDPCookieManager.wsScheme
             rewrittenWS = browserWS
-                .replacingOccurrences(of: "ws://127.0.0.1:9222", with: "ws://\(host):\(port)")
-                .replacingOccurrences(of: "ws://localhost:9222", with: "ws://\(host):\(port)")
+                .replacingOccurrences(of: "ws://127.0.0.1:9222", with: "\(wsScheme)://\(host):\(port)")
+                .replacingOccurrences(of: "ws://localhost:9222", with: "\(wsScheme)://\(host):\(port)")
         } else {
             rewrittenWS = browserWS
         }
@@ -78,9 +109,10 @@ class CDPCookieManager {
     /// Check if our persistent tab is still alive
     private func isPersistentTabAlive(host: String, port: Int) async -> Bool {
         guard let targetId = persistentTargetId else { return false }
-        guard let url = URL(string: "http://\(host):\(port)/json/list") else { return false }
+        let scheme = CDPCookieManager.httpScheme
+        guard let url = URL(string: "\(scheme)://\(host):\(port)/json/list") else { return false }
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let (data, _) = try await trustingSession.data(from: url)
             let tabs = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] ?? []
             return tabs.contains { ($0["id"] as? String) == targetId }
         } catch {
@@ -94,7 +126,8 @@ class CDPCookieManager {
         let host = CDPCookieManager.cdpHost
         let port = CDPCookieManager.cdpPort
 
-        let ws = URLSession.shared.webSocketTask(with: url)
+        // Use trusting session for WSS with self-signed certs
+        let ws = trustingSession.webSocketTask(with: url)
         ws.resume()
         defer { ws.cancel(with: .goingAway, reason: nil) }
 
@@ -128,28 +161,23 @@ class CDPCookieManager {
 
         if tabAlive, let tid = persistentTargetId {
             targetId = tid
-            // Re-attach to get a fresh session
             let attachResp = try await sendCommand("Target.attachToTarget", params: [
                 "targetId": targetId,
                 "flatten": true
             ])
             guard let attachResult = attachResp["result"] as? [String: Any],
                   let sid = attachResult["sessionId"] as? String else {
-                // Tab exists but can't attach — recreate
                 persistentTargetId = nil
                 persistentSessionId = nil
                 return try await createPersistentTabAndExtract(ws: ws, nextID: &msgID)
             }
             sessionId = sid
         } else {
-            // Create new persistent tab
             return try await createPersistentTabAndExtract(ws: ws, nextID: &msgID)
         }
 
-        // Read cookies from the persistent tab
         let cookies = try await getCookiesFromSession(ws: ws, sessionId: sessionId, msgID: &msgID)
 
-        // Detach but keep tab alive
         let detachID = msgID + 1; msgID = detachID
         let detachCmd: [String: Any] = [
             "id": detachID,
@@ -188,8 +216,9 @@ class CDPCookieManager {
         // Clean up any orphaned claude.ai tabs before creating a new one
         let host = CDPCookieManager.cdpHost
         let port = CDPCookieManager.cdpPort
-        if let listURL = URL(string: "http://\(host):\(port)/json/list"),
-           let (listData, _) = try? await URLSession.shared.data(from: listURL),
+        let scheme = CDPCookieManager.httpScheme
+        if let listURL = URL(string: "\(scheme)://\(host):\(port)/json/list"),
+           let (listData, _) = try? await trustingSession.data(from: listURL),
            let tabs = try? JSONSerialization.jsonObject(with: listData) as? [[String: Any]] {
             for tab in tabs {
                 if let url = tab["url"] as? String, url.contains("claude.ai"),
@@ -216,17 +245,13 @@ class CDPCookieManager {
             throw CDPError.invalidResponse
         }
 
-        // Save persistent tab info
         persistentTargetId = targetId
         persistentSessionId = sessionId
 
-        // Wait for page load so session cookies are set
         try await Task.sleep(nanoseconds: 3_000_000_000) // 3s for full page
 
-        // Get cookies
         let cookies = try await getCookiesFromSession(ws: ws, sessionId: sessionId, msgID: &msgID)
 
-        // Detach but keep tab alive — claude.ai frontend will maintain the session
         let detachID = msgID + 1; msgID = detachID
         let detachCmd: [String: Any] = [
             "id": detachID,
