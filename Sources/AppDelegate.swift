@@ -61,6 +61,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             self.updateMenuBarText()
             self.updatePopoverContent()
+            self.adjustRefreshRate(for: result)
+        }
+    }
+
+    /// Speed up refresh when in error state, slow down when healthy
+    private func adjustRefreshRate(for state: UsageState) {
+        let interval: TimeInterval
+        switch state {
+        case .loaded:
+            interval = 300  // 5 min when healthy
+        case .authNeeded, .noCDP, .error:
+            interval = 30   // 30s when errored — auto-recover faster
+        case .loading:
+            return
+        }
+
+        // Only recreate timer if interval changed
+        if let timer = refreshTimer, timer.timeInterval == interval { return }
+        refreshTimer?.invalidate()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { await self?.refresh() }
         }
     }
 

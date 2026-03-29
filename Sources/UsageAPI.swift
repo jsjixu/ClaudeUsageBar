@@ -9,6 +9,10 @@ class UsageAPI {
     }
 
     func fetchUsage() async -> UsageState {
+        return await doFetch(retried: false)
+    }
+
+    private func doFetch(retried: Bool) async -> UsageState {
         do {
             let cookies = try await cookieManager.fetchCookies()
             let urlStr = "https://claude.ai/api/organizations/\(orgID)/usage"
@@ -32,6 +36,12 @@ class UsageAPI {
 
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                    if !retried {
+                        // Auth failed — stale cookies. Nuke cache + persistent tab, retry once
+                        cookieManager.invalidateCache()
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        return await doFetch(retried: true)
+                    }
                     return .authNeeded
                 }
                 if httpResponse.statusCode != 200 {
