@@ -4,12 +4,14 @@ struct UsageResponse: Codable {
     let fiveHour: UsageBucket?
     let sevenDay: UsageBucket?
     let sevenDaySonnet: UsageBucket?
+    let sevenDayOpus: UsageBucket?
     let extraUsage: ExtraUsage?
 
     enum CodingKeys: String, CodingKey {
         case fiveHour = "five_hour"
         case sevenDay = "seven_day"
         case sevenDaySonnet = "seven_day_sonnet"
+        case sevenDayOpus = "seven_day_opus"
         case extraUsage = "extra_usage"
     }
 }
@@ -61,6 +63,7 @@ enum UsageState {
     case loading
     case loaded(UsageResponse)
     case error(String)
-    case authNeeded
-    case noCDP
+    case authNeeded   // Token expired
+    case noAuth       // No credentials found
+    case noCDP        // Legacy — kept for compatibility but unused in OAuth mode
 }

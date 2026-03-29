@@ -5,7 +5,6 @@ struct PopoverView: View {
     let lastRefresh: Date?
     let onRefresh: () -> Void
     let onQuit: () -> Void
-    let onSettings: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -33,12 +32,18 @@ struct PopoverView: View {
                 Label(msg, systemImage: "exclamationmark.triangle.fill")
                     .foregroundColor(.orange)
             case .authNeeded:
-                Label("Login needed — open claude.ai in Chrome", systemImage: "lock.fill")
+                Label("Token expired — run `claude` to refresh", systemImage: "lock.fill")
                     .foregroundColor(.red)
+            case .noAuth:
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("No Claude Code credentials found", systemImage: "key.fill")
+                        .foregroundColor(.orange)
+                    Text("Install Claude Code CLI and run `claude` to log in")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             case .noCDP:
-                let host = CDPCookieManager.cdpHost
-                let port = CDPCookieManager.cdpPort
-                Label("Chrome CDP not available (\(host):\(port))", systemImage: "xmark.circle.fill")
+                Label("Legacy CDP mode — update app", systemImage: "xmark.circle.fill")
                     .foregroundColor(.gray)
             }
 
@@ -54,11 +59,6 @@ struct PopoverView: View {
                 Spacer()
                 Button(action: onRefresh) {
                     Label("Refresh", systemImage: "arrow.clockwise")
-                        .font(.caption)
-                }
-                .buttonStyle(.borderless)
-                Button(action: onSettings) {
-                    Label("Settings", systemImage: "gearshape")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
@@ -97,6 +97,14 @@ struct PopoverView: View {
                 icon: "sparkle",
                 utilization: util,
                 resetTime: sonnet.timeUntilReset
+            )
+        }
+        if let opus = usage.sevenDayOpus, let util = opus.utilization, util > 0 {
+            usageRow(
+                title: "Opus (7d)",
+                icon: "star.fill",
+                utilization: util,
+                resetTime: opus.timeUntilReset
             )
         }
     }

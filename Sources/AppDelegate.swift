@@ -10,7 +10,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var currentState: UsageState = .loading
     private var lastRefresh: Date?
     private var lastUsage: UsageResponse?
-    private var showingSettings = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon
@@ -46,7 +45,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(nil)
         } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            // Bring popover to front
             NSApp.activate(ignoringOtherApps: true)
         }
     }
@@ -71,13 +69,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         switch state {
         case .loaded:
             interval = 300  // 5 min when healthy
-        case .authNeeded, .noCDP, .error:
+        case .authNeeded, .noAuth, .error, .noCDP:
             interval = 30   // 30s when errored — auto-recover faster
         case .loading:
             return
         }
 
-        // Only recreate timer if interval changed
         if let timer = refreshTimer, timer.timeInterval == interval { return }
         refreshTimer?.invalidate()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
@@ -94,9 +91,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .loaded(let usage):
             let session = Int(usage.fiveHour?.utilization ?? 0)
             let weekly = Int(usage.sevenDay?.utilization ?? 0)
-            button.title = "⚡\(session)% 📅\(weekly)%"
 
-            // Color based on highest utilization
             let maxUtil = max(usage.fiveHour?.utilization ?? 0, usage.sevenDay?.utilization ?? 0)
             let color: NSColor
             if maxUtil < 50 {
@@ -115,47 +110,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.title = "⚠️ Error"
         case .authNeeded:
             button.title = "🔒 Auth"
+        case .noAuth:
+            button.title = "🔑 No Key"
         case .noCDP:
             button.title = "⛔ CDP"
         }
     }
 
     private func updatePopoverContent() {
-        if showingSettings {
-            popover.contentViewController = NSHostingController(
-                rootView: SettingsView(
-                    onSave: { [weak self] in
-                        // Invalidate cookie cache and re-fetch with new host
-                        self?.api.invalidateCookieCache()
-                        self?.showingSettings = false
-                        self?.updatePopoverContent()
-                        Task { await self?.refresh() }
-                    },
-                    onDismiss: { [weak self] in
-                        self?.showingSettings = false
-                        self?.updatePopoverContent()
-                    }
-                )
+        let state = self.currentState
+        let refresh = self.lastRefresh
+        popover.contentViewController = NSHostingController(
+            rootView: PopoverView(
+                state: state,
+                lastRefresh: refresh,
+                onRefresh: { [weak self] in
+                    Task { await self?.refresh() }
+                },
+                onQuit: {
+                    NSApp.terminate(nil)
+                }
             )
-        } else {
-            let state = self.currentState
-            let refresh = self.lastRefresh
-            popover.contentViewController = NSHostingController(
-                rootView: PopoverView(
-                    state: state,
-                    lastRefresh: refresh,
-                    onRefresh: { [weak self] in
-                        Task { await self?.refresh() }
-                    },
-                    onQuit: {
-                        NSApp.terminate(nil)
-                    },
-                    onSettings: { [weak self] in
-                        self?.showingSettings = true
-                        self?.updatePopoverContent()
-                    }
-                )
-            )
-        }
+        )
     }
 }

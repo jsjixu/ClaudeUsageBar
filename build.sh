@@ -13,13 +13,13 @@ swiftc -o "$BINARY_NAME" \
   -target arm64-apple-macosx15.0 \
   -framework AppKit \
   -framework SwiftUI \
+  -framework Security \
   -Osize \
   -parse-as-library \
   Sources/UsageModel.swift \
-  Sources/CDPCookieManager.swift \
+  Sources/OAuthManager.swift \
   Sources/UsageAPI.swift \
   Sources/PopoverView.swift \
-  Sources/SettingsView.swift \
   Sources/AppDelegate.swift \
   Sources/main.swift
 
