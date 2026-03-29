@@ -27,7 +27,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create popover
         popover = NSPopover()
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 320, height: 280)
+        popover.contentSize = NSSize(width: 320, height: 340)
         updatePopoverContent()
 
         // Initial fetch
