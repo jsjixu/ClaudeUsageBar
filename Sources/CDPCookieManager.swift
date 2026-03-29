@@ -45,12 +45,12 @@ class CDPCookieManager {
             throw CDPError.invalidResponse
         }
 
-        // Rewrite WS URL host — remote CDP returns ws://127.0.0.1:port/... but we need actual host
+        // Rewrite WS URL — remote CDP returns ws://127.0.0.1:9222/... but we need actual host:port
         let rewrittenWS: String
         if host != "127.0.0.1" && host != "localhost" {
             rewrittenWS = browserWS
-                .replacingOccurrences(of: "ws://127.0.0.1:", with: "ws://\(host):")
-                .replacingOccurrences(of: "ws://localhost:", with: "ws://\(host):")
+                .replacingOccurrences(of: "ws://127.0.0.1:9222", with: "ws://\(host):\(port)")
+                .replacingOccurrences(of: "ws://localhost:9222", with: "ws://\(host):\(port)")
         } else {
             rewrittenWS = browserWS
         }
