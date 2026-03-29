@@ -5,6 +5,7 @@ struct PopoverView: View {
     let lastRefresh: Date?
     let onRefresh: () -> Void
     let onQuit: () -> Void
+    let onSettings: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -35,7 +36,9 @@ struct PopoverView: View {
                 Label("Login needed — open claude.ai in Chrome", systemImage: "lock.fill")
                     .foregroundColor(.red)
             case .noCDP:
-                Label("Chrome CDP not available (port 9222)", systemImage: "xmark.circle.fill")
+                let host = CDPCookieManager.cdpHost
+                let port = CDPCookieManager.cdpPort
+                Label("Chrome CDP not available (\(host):\(port))", systemImage: "xmark.circle.fill")
                     .foregroundColor(.gray)
             }
 
@@ -51,6 +54,11 @@ struct PopoverView: View {
                 Spacer()
                 Button(action: onRefresh) {
                     Label("Refresh", systemImage: "arrow.clockwise")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                Button(action: onSettings) {
+                    Label("Settings", systemImage: "gearshape")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)

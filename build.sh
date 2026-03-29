@@ -19,6 +19,7 @@ swiftc -o "$BINARY_NAME" \
   Sources/CDPCookieManager.swift \
   Sources/UsageAPI.swift \
   Sources/PopoverView.swift \
+  Sources/SettingsView.swift \
   Sources/AppDelegate.swift \
   Sources/main.swift
 

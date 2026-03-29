@@ -4,6 +4,10 @@ class UsageAPI {
     private let orgID = "ec954bf6-ee1a-418e-92d1-bef93b5faed9"
     private let cookieManager = CDPCookieManager()
 
+    func invalidateCookieCache() {
+        cookieManager.invalidateCache()
+    }
+
     func fetchUsage() async -> UsageState {
         do {
             let cookies = try await cookieManager.fetchCookies()

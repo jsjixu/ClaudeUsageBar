@@ -1,11 +1,24 @@
 import Foundation
 
 class CDPCookieManager {
-    private let cdpHost = "127.0.0.1"
-    private let cdpPort = 9222
     private var cachedCookies: String?
     private var cacheTime: Date?
     private let cacheTTL: TimeInterval = 240  // Cache cookies for 4 minutes
+
+    static var cdpHost: String {
+        let saved = UserDefaults.standard.string(forKey: "cdp_host") ?? ""
+        return saved.isEmpty ? "127.0.0.1" : saved
+    }
+
+    static var cdpPort: Int {
+        let saved = UserDefaults.standard.integer(forKey: "cdp_port")
+        return saved > 0 ? saved : 9222
+    }
+
+    func invalidateCache() {
+        cachedCookies = nil
+        cacheTime = nil
+    }
 
     func fetchCookies() async throws -> String {
         // Return cached cookies if fresh
@@ -14,8 +27,11 @@ class CDPCookieManager {
             return cached
         }
 
+        let host = CDPCookieManager.cdpHost
+        let port = CDPCookieManager.cdpPort
+
         // Get browser-level WS endpoint
-        let versionURL = URL(string: "http://\(cdpHost):\(cdpPort)/json/version")!
+        let versionURL = URL(string: "http://\(host):\(port)/json/version")!
         let (data, _) = try await URLSession.shared.data(from: versionURL)
 
         guard let versionInfo = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -23,7 +39,17 @@ class CDPCookieManager {
             throw CDPError.invalidResponse
         }
 
-        let cookies = try await extractCookies(browserWS: browserWS)
+        // Rewrite WS URL host — remote CDP returns ws://127.0.0.1:port/... but we need actual host
+        let rewrittenWS: String
+        if host != "127.0.0.1" && host != "localhost" {
+            rewrittenWS = browserWS
+                .replacingOccurrences(of: "ws://127.0.0.1:", with: "ws://\(host):")
+                .replacingOccurrences(of: "ws://localhost:", with: "ws://\(host):")
+        } else {
+            rewrittenWS = browserWS
+        }
+
+        let cookies = try await extractCookies(browserWS: rewrittenWS)
         cachedCookies = cookies
         cacheTime = Date()
         return cookies

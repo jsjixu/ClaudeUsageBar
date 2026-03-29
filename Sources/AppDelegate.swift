@@ -10,6 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var currentState: UsageState = .loading
     private var lastRefresh: Date?
     private var lastUsage: UsageResponse?
+    private var showingSettings = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon
@@ -99,19 +100,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updatePopoverContent() {
-        let state = self.currentState
-        let refresh = self.lastRefresh
-        popover.contentViewController = NSHostingController(
-            rootView: PopoverView(
-                state: state,
-                lastRefresh: refresh,
-                onRefresh: { [weak self] in
-                    Task { await self?.refresh() }
-                },
-                onQuit: {
-                    NSApp.terminate(nil)
-                }
+        if showingSettings {
+            popover.contentViewController = NSHostingController(
+                rootView: SettingsView(
+                    onSave: { [weak self] in
+                        // Invalidate cookie cache and re-fetch with new host
+                        self?.api.invalidateCookieCache()
+                        self?.showingSettings = false
+                        self?.updatePopoverContent()
+                        Task { await self?.refresh() }
+                    },
+                    onDismiss: { [weak self] in
+                        self?.showingSettings = false
+                        self?.updatePopoverContent()
+                    }
+                )
             )
-        )
+        } else {
+            let state = self.currentState
+            let refresh = self.lastRefresh
+            popover.contentViewController = NSHostingController(
+                rootView: PopoverView(
+                    state: state,
+                    lastRefresh: refresh,
+                    onRefresh: { [weak self] in
+                        Task { await self?.refresh() }
+                    },
+                    onQuit: {
+                        NSApp.terminate(nil)
+                    },
+                    onSettings: { [weak self] in
+                        self?.showingSettings = true
+                        self?.updatePopoverContent()
+                    }
+                )
+            )
+        }
     }
 }
