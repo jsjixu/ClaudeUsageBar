@@ -5,6 +5,10 @@ class CDPCookieManager {
     private var cacheTime: Date?
     private let cacheTTL: TimeInterval = 240  // Cache cookies for 4 minutes
 
+    // Persistent background tab for session keep-alive
+    private var persistentTargetId: String?
+    private var persistentSessionId: String?
+
     static var cdpHost: String {
         let saved = UserDefaults.standard.string(forKey: "cdp_host") ?? ""
         return saved.isEmpty ? "127.0.0.1" : saved
@@ -18,6 +22,8 @@ class CDPCookieManager {
     func invalidateCache() {
         cachedCookies = nil
         cacheTime = nil
+        persistentTargetId = nil
+        persistentSessionId = nil
     }
 
     func fetchCookies() async throws -> String {
@@ -49,14 +55,30 @@ class CDPCookieManager {
             rewrittenWS = browserWS
         }
 
-        let cookies = try await extractCookies(browserWS: rewrittenWS)
+        let cookies = try await extractCookiesWithKeepAlive(browserWS: rewrittenWS)
         cachedCookies = cookies
         cacheTime = Date()
         return cookies
     }
 
-    private func extractCookies(browserWS: String) async throws -> String {
+    /// Check if our persistent tab is still alive
+    private func isPersistentTabAlive(host: String, port: Int) async -> Bool {
+        guard let targetId = persistentTargetId else { return false }
+        guard let url = URL(string: "http://\(host):\(port)/json/list") else { return false }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let tabs = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] ?? []
+            return tabs.contains { ($0["id"] as? String) == targetId }
+        } catch {
+            return false
+        }
+    }
+
+    private func extractCookiesWithKeepAlive(browserWS: String) async throws -> String {
         guard let url = URL(string: browserWS) else { throw CDPError.invalidURL }
+
+        let host = CDPCookieManager.cdpHost
+        let port = CDPCookieManager.cdpPort
 
         let ws = URLSession.shared.webSocketTask(with: url)
         ws.resume()
@@ -65,13 +87,13 @@ class CDPCookieManager {
         var msgID = 0
         func nextID() -> Int { msgID += 1; return msgID }
 
-        func sendCommand(_ method: String, params: [String: Any] = [:]) async throws -> [String: Any] {
+        func sendCommand(_ method: String, params: [String: Any] = [:], sessionId: String? = nil) async throws -> [String: Any] {
             let id = nextID()
-            let cmd: [String: Any] = ["id": id, "method": method, "params": params]
+            var cmd: [String: Any] = ["id": id, "method": method, "params": params]
+            if let sid = sessionId { cmd["sessionId"] = sid }
             let cmdData = try JSONSerialization.data(withJSONObject: cmd)
             try await ws.send(.string(String(data: cmdData, encoding: .utf8)!))
 
-            // Read messages until we get our response
             for _ in 0..<30 {
                 let message = try await ws.receive()
                 if case .string(let text) = message,
@@ -84,41 +106,114 @@ class CDPCookieManager {
             throw CDPError.invalidResponse
         }
 
-        // 1. Create a background target (about:blank — invisible)
-        let createResp = try await sendCommand("Target.createTarget", params: ["url": "about:blank"])
+        // Check if persistent tab is still alive
+        let tabAlive = await isPersistentTabAlive(host: host, port: port)
+
+        let targetId: String
+        let sessionId: String
+
+        if tabAlive, let tid = persistentTargetId {
+            targetId = tid
+            // Re-attach to get a fresh session
+            let attachResp = try await sendCommand("Target.attachToTarget", params: [
+                "targetId": targetId,
+                "flatten": true
+            ])
+            guard let attachResult = attachResp["result"] as? [String: Any],
+                  let sid = attachResult["sessionId"] as? String else {
+                // Tab exists but can't attach — recreate
+                persistentTargetId = nil
+                persistentSessionId = nil
+                return try await createPersistentTabAndExtract(ws: ws, nextID: &msgID)
+            }
+            sessionId = sid
+        } else {
+            // Create new persistent tab
+            return try await createPersistentTabAndExtract(ws: ws, nextID: &msgID)
+        }
+
+        // Read cookies from the persistent tab
+        let cookies = try await getCookiesFromSession(ws: ws, sessionId: sessionId, msgID: &msgID)
+
+        // Detach but keep tab alive
+        let detachID = msgID + 1; msgID = detachID
+        let detachCmd: [String: Any] = [
+            "id": detachID,
+            "method": "Target.detachFromTarget",
+            "params": ["sessionId": sessionId]
+        ]
+        let detachData = try JSONSerialization.data(withJSONObject: detachCmd)
+        try? await ws.send(.string(String(data: detachData, encoding: .utf8)!))
+
+        if cookies.isEmpty { throw CDPError.noCookies }
+        return cookies
+    }
+
+    private func createPersistentTabAndExtract(ws: URLSessionWebSocketTask, nextID msgID: inout Int) async throws -> String {
+        func nextID() -> Int { msgID += 1; return msgID }
+
+        func sendCommand(_ method: String, params: [String: Any] = [:], sessionId: String? = nil) async throws -> [String: Any] {
+            let id = nextID()
+            var cmd: [String: Any] = ["id": id, "method": method, "params": params]
+            if let sid = sessionId { cmd["sessionId"] = sid }
+            let cmdData = try JSONSerialization.data(withJSONObject: cmd)
+            try await ws.send(.string(String(data: cmdData, encoding: .utf8)!))
+
+            for _ in 0..<30 {
+                let message = try await ws.receive()
+                if case .string(let text) = message,
+                   let respData = text.data(using: .utf8),
+                   let resp = try JSONSerialization.jsonObject(with: respData) as? [String: Any],
+                   (resp["id"] as? Int) == id {
+                    return resp
+                }
+            }
+            throw CDPError.invalidResponse
+        }
+
+        // Create persistent tab — load claude.ai so frontend JS keeps session alive
+        let createResp = try await sendCommand("Target.createTarget", params: ["url": "https://claude.ai"])
         guard let targetResult = createResp["result"] as? [String: Any],
               let targetId = targetResult["targetId"] as? String else {
             throw CDPError.invalidResponse
         }
 
-        // 2. Attach to the new target to get a session
         let attachResp = try await sendCommand("Target.attachToTarget", params: [
             "targetId": targetId,
             "flatten": true
         ])
         guard let attachResult = attachResp["result"] as? [String: Any],
               let sessionId = attachResult["sessionId"] as? String else {
-            // Clean up and throw
             _ = try? await sendCommand("Target.closeTarget", params: ["targetId": targetId])
             throw CDPError.invalidResponse
         }
 
-        // 3. Navigate to claude.ai to access cookies (uses existing session cookies from profile)
-        let navID = nextID()
-        let navCmd: [String: Any] = [
-            "id": navID,
-            "method": "Page.navigate",
-            "params": ["url": "https://claude.ai/api/organizations"],
-            "sessionId": sessionId
+        // Save persistent tab info
+        persistentTargetId = targetId
+        persistentSessionId = sessionId
+
+        // Wait for page load so session cookies are set
+        try await Task.sleep(nanoseconds: 3_000_000_000) // 3s for full page
+
+        // Get cookies
+        let cookies = try await getCookiesFromSession(ws: ws, sessionId: sessionId, msgID: &msgID)
+
+        // Detach but keep tab alive — claude.ai frontend will maintain the session
+        let detachID = msgID + 1; msgID = detachID
+        let detachCmd: [String: Any] = [
+            "id": detachID,
+            "method": "Target.detachFromTarget",
+            "params": ["sessionId": sessionId]
         ]
-        let navData = try JSONSerialization.data(withJSONObject: navCmd)
-        try await ws.send(.string(String(data: navData, encoding: .utf8)!))
+        let detachData = try JSONSerialization.data(withJSONObject: detachCmd)
+        try? await ws.send(.string(String(data: detachData, encoding: .utf8)!))
 
-        // Wait briefly for navigation
-        try await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s
+        if cookies.isEmpty { throw CDPError.noCookies }
+        return cookies
+    }
 
-        // 4. Get cookies from the session
-        let cookieID = nextID()
+    private func getCookiesFromSession(ws: URLSessionWebSocketTask, sessionId: String, msgID: inout Int) async throws -> String {
+        let cookieID = msgID + 1; msgID = cookieID
         let cookieCmd: [String: Any] = [
             "id": cookieID,
             "method": "Network.getCookies",
@@ -128,8 +223,6 @@ class CDPCookieManager {
         let cookieData = try JSONSerialization.data(withJSONObject: cookieCmd)
         try await ws.send(.string(String(data: cookieData, encoding: .utf8)!))
 
-        var cookieStr = ""
-        // Read until we find our cookie response
         for _ in 0..<30 {
             let message = try await ws.receive()
             if case .string(let text) = message,
@@ -138,7 +231,7 @@ class CDPCookieManager {
                (resp["id"] as? Int) == cookieID {
                 if let result = resp["result"] as? [String: Any],
                    let cookies = result["cookies"] as? [[String: Any]] {
-                    cookieStr = cookies.compactMap { c -> String? in
+                    return cookies.compactMap { c -> String? in
                         guard let name = c["name"] as? String,
                               let value = c["value"] as? String else { return nil }
                         return "\(name)=\(value)"
@@ -147,20 +240,7 @@ class CDPCookieManager {
                 break
             }
         }
-
-        // 5. Close the background target (cleanup!)
-        let closeID = nextID()
-        let closeCmd: [String: Any] = [
-            "id": closeID,
-            "method": "Target.closeTarget",
-            "params": ["targetId": targetId]
-        ]
-        let closeData = try JSONSerialization.data(withJSONObject: closeCmd)
-        try await ws.send(.string(String(data: closeData, encoding: .utf8)!))
-        // Don't wait for response, we're closing anyway
-
-        if cookieStr.isEmpty { throw CDPError.noCookies }
-        return cookieStr
+        return ""
     }
 
     enum CDPError: LocalizedError {
