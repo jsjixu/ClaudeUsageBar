@@ -1,0 +1,15 @@
+# Build artifacts
+ClaudeUsageBar
+Claude Usage Bar.app/
+*.o
+*.swp
+
+# macOS
+.DS_Store
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+
+# IDE
+.vscode/
+.idea/
