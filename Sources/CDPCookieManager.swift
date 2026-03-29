@@ -20,10 +20,24 @@ class CDPCookieManager {
     }
 
     func invalidateCache() {
+        // Close the old persistent tab if it exists
+        if let targetId = persistentTargetId {
+            let host = CDPCookieManager.cdpHost
+            let port = CDPCookieManager.cdpPort
+            Task {
+                await closePersistentTab(host: host, port: port, targetId: targetId)
+            }
+        }
         cachedCookies = nil
         cacheTime = nil
         persistentTargetId = nil
         persistentSessionId = nil
+    }
+
+    /// Close a CDP target by ID via HTTP endpoint
+    private func closePersistentTab(host: String, port: Int, targetId: String) async {
+        guard let url = URL(string: "http://\(host):\(port)/json/close/\(targetId)") else { return }
+        _ = try? await URLSession.shared.data(from: url)
     }
 
     func fetchCookies() async throws -> String {
@@ -169,6 +183,20 @@ class CDPCookieManager {
                 }
             }
             throw CDPError.invalidResponse
+        }
+
+        // Clean up any orphaned claude.ai tabs before creating a new one
+        let host = CDPCookieManager.cdpHost
+        let port = CDPCookieManager.cdpPort
+        if let listURL = URL(string: "http://\(host):\(port)/json/list"),
+           let (listData, _) = try? await URLSession.shared.data(from: listURL),
+           let tabs = try? JSONSerialization.jsonObject(with: listData) as? [[String: Any]] {
+            for tab in tabs {
+                if let url = tab["url"] as? String, url.contains("claude.ai"),
+                   let tabId = tab["id"] as? String {
+                    await closePersistentTab(host: host, port: port, targetId: tabId)
+                }
+            }
         }
 
         // Create persistent tab — load claude.ai so frontend JS keeps session alive
