@@ -1,5 +1,7 @@
 # Claude Usage Bar
 
+**[中文版](README_CN.md)**
+
 <p align="center">
   <img src="screenshots/icon.png" width="128" alt="Claude Usage Bar Icon">
 </p>
