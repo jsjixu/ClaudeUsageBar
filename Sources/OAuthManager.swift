@@ -16,19 +16,55 @@ class OAuthManager {
         }
     }
 
-    /// Read OAuth access token from macOS Keychain (written by Claude Code CLI)
+    /// Read OAuth access token. Priority: CLIProxyAPI (auto-refreshing) > Keychain > file
     func getAccessToken() throws -> String {
-        // Try Keychain first
+        // 1. CLIProxyAPI — has refresh_token, auto-renews
+        if let token = readFromCLIProxyAPI() {
+            return token
+        }
+
+        // 2. Keychain (Claude Code CLI)
         if let token = readFromKeychain() {
             return token
         }
 
-        // Fallback: ~/.claude/.credentials.json
+        // 3. Fallback: ~/.claude/.credentials.json
         if let token = readFromFile() {
             return token
         }
 
         throw OAuthError.noCredentials
+    }
+
+    /// Read from ~/.cli-proxy-api/claude-*.json (CLIProxyAPI with auto-refresh)
+    private func readFromCLIProxyAPI() -> String? {
+        let dir = NSString(string: "~/.cli-proxy-api").expandingTildeInPath
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else {
+            return nil
+        }
+
+        // Find claude-*.json files
+        let claudeFiles = files.filter { $0.hasPrefix("claude-") && $0.hasSuffix(".json") }
+        guard let filename = claudeFiles.first else { return nil }
+
+        let path = (dir as NSString).appendingPathComponent(filename)
+        guard let data = FileManager.default.contents(atPath: path),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let token = json["access_token"] as? String,
+              !token.isEmpty else {
+            return nil
+        }
+
+        // Check expiry if available
+        if let expiryStr = json["expired"] as? String {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone]
+            if let expiry = formatter.date(from: expiryStr), expiry < Date() {
+                return nil  // Token expired, fall through to next source
+            }
+        }
+
+        return token
     }
 
     private func readFromKeychain() -> String? {
@@ -51,6 +87,13 @@ class OAuthManager {
             return nil
         }
 
+        // Check expiry
+        if let expiresAt = oauth["expiresAt"] as? Double {
+            if Date(timeIntervalSince1970: expiresAt / 1000) < Date() {
+                return nil  // Expired, fall through
+            }
+        }
+
         return token
     }
 
@@ -67,3 +110,4 @@ class OAuthManager {
         return token
     }
 }
+
