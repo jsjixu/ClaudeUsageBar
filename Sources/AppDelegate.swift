@@ -11,6 +11,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastRefresh: Date?
     private var lastUsage: UsageResponse?
     private var usageServer: UsageServer?
+    private var consecutiveErrors: Int = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon
@@ -72,11 +73,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let result = await api.fetchUsage()
         await MainActor.run {
             self.currentState = result
-            if case .loaded(let usage) = result {
+            switch result {
+            case .loaded(let usage):
                 self.lastUsage = usage
                 self.lastRefresh = Date()
+                self.consecutiveErrors = 0
                 // Feed cache to embedded server
                 self.usageServer?.updateCache(usage)
+            case .error:
+                self.consecutiveErrors += 1
+            case .rateLimited:
+                self.consecutiveErrors += 1
+            default:
+                break
             }
             self.updateMenuBarText()
             self.updatePopoverContent()
@@ -84,14 +93,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Speed up refresh when in error state, slow down when healthy
+    /// Adjust refresh rate: back off on errors/429, normal pace when healthy
     private func adjustRefreshRate(for state: UsageState) {
         let interval: TimeInterval
         switch state {
         case .loaded:
             interval = 300  // 5 min when healthy
-        case .authNeeded, .noAuth, .error, .noCDP:
-            interval = 30   // 30s when errored — auto-recover faster
+        case .rateLimited(let retryAfter):
+            // Respect server's Retry-After, minimum 60s, max 10 min
+            interval = min(max(retryAfter, 60), 600)
+        case .error:
+            // Exponential backoff: 60s, 120s, 240s, 480s, capped at 600s
+            let backoff = 60.0 * pow(2.0, Double(min(consecutiveErrors - 1, 3)))
+            interval = min(backoff, 600)
+        case .authNeeded, .noAuth, .noCDP:
+            interval = 120  // Auth issues: check every 2 min (user may re-auth)
         case .loading:
             return
         }
@@ -127,6 +143,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
             ]
             button.attributedTitle = NSAttributedString(string: "⚡\(session)% 📅\(weekly)%", attributes: attrs)
+        case .rateLimited:
+            button.title = "⏳ 429"
         case .error:
             button.title = "⚠️ Error"
         case .authNeeded:

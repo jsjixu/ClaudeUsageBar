@@ -63,6 +63,7 @@ enum UsageState {
     case loading
     case loaded(UsageResponse)
     case error(String)
+    case rateLimited(retryAfter: TimeInterval)  // 429 — back off
     case authNeeded   // Token expired
     case noAuth       // No credentials found
     case noCDP        // Legacy — kept for compatibility but unused in OAuth mode
