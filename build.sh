@@ -15,9 +15,11 @@ swiftc -o "$BINARY_NAME" \
   -framework SwiftUI \
   -framework Security \
   -framework Network \
+  -lsqlite3 \
   -Osize \
   -parse-as-library \
   Sources/UsageModel.swift \
+  Sources/UsageStore.swift \
   Sources/OAuthManager.swift \
   Sources/LaunchAtLogin.swift \
   Sources/UsageServer.swift \

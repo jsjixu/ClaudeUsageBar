@@ -17,6 +17,7 @@ swiftc -o ClaudeUsageBar \
   -target arm64-apple-macosx15.0 \
   -framework AppKit \
   -framework SwiftUI \
+  -lsqlite3 \
   Sources/*.swift
 ```
 
