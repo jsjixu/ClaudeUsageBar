@@ -14,11 +14,13 @@ swiftc -o "$BINARY_NAME" \
   -framework AppKit \
   -framework SwiftUI \
   -framework Security \
+  -framework Network \
   -Osize \
   -parse-as-library \
   Sources/UsageModel.swift \
   Sources/OAuthManager.swift \
   Sources/LaunchAtLogin.swift \
+  Sources/UsageServer.swift \
   Sources/UsageAPI.swift \
   Sources/PopoverView.swift \
   Sources/AppDelegate.swift \

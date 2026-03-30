@@ -1,6 +1,6 @@
 import Foundation
 
-struct UsageResponse: Codable {
+struct UsageResponse: Codable, Sendable {
     let fiveHour: UsageBucket?
     let sevenDay: UsageBucket?
     let sevenDaySonnet: UsageBucket?
@@ -16,7 +16,7 @@ struct UsageResponse: Codable {
     }
 }
 
-struct UsageBucket: Codable {
+struct UsageBucket: Codable, Sendable {
     let utilization: Double?
     let resetsAt: String?
 
@@ -49,7 +49,7 @@ struct UsageBucket: Codable {
     }
 }
 
-struct ExtraUsage: Codable {
+struct ExtraUsage: Codable, Sendable {
     let isEnabled: Bool?
     let utilization: Double?
 
