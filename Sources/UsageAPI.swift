@@ -141,6 +141,11 @@ class UsageAPI {
                     }
                     return .authNeeded
                 }
+                if httpResponse.statusCode == 429 {
+                    let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After")
+                        .flatMap { Double($0) } ?? 60
+                    return .rateLimited(retryAfter: retryAfter)
+                }
                 if httpResponse.statusCode != 200 {
                     return .error("HTTP \(httpResponse.statusCode)")
                 }

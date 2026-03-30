@@ -47,6 +47,9 @@ struct PopoverView: View {
                 }
             case .loaded(let usage):
                 usageContent(usage)
+            case .rateLimited(let retryAfter):
+                Label("Rate limited — retrying in \(Int(retryAfter))s", systemImage: "hourglass")
+                    .foregroundColor(.orange)
             case .error(let msg):
                 Label(msg, systemImage: "exclamationmark.triangle.fill")
                     .foregroundColor(.orange)
