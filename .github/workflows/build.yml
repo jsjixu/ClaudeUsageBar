@@ -1,0 +1,26 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with swiftc
+        run: |
+          swiftc -o ClaudeUsageBar \
+            -target arm64-apple-macosx15.0 \
+            -framework AppKit \
+            -framework SwiftUI \
+            Sources/*.swift
+
+      - name: Verify binary exists
+        run: |
+          file ClaudeUsageBar
+          ls -lh ClaudeUsageBar
