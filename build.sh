@@ -20,6 +20,7 @@ swiftc -o "$BINARY_NAME" \
   -parse-as-library \
   Sources/UsageModel.swift \
   Sources/UsageStore.swift \
+  Sources/OAuthFailureGate.swift \
   Sources/OAuthManager.swift \
   Sources/LaunchAtLogin.swift \
   Sources/UsageAPI.swift \
