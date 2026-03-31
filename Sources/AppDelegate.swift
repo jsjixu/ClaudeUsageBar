@@ -40,7 +40,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create popover
         popover = NSPopover()
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 320, height: 340)
+        popover.contentSize = NSSize(width: 320, height: 500)
         updatePopoverContent()
 
         // Start embedded HTTP server in local mode (serves cache to remote clients)
@@ -78,6 +78,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.lastUsage = usage
                 self.lastRefresh = Date()
                 self.consecutiveErrors = 0
+                // Persist snapshot for history/heatmap
+                UsageStore.shared.record(usage)
                 // Feed cache to embedded server
                 self.usageServer?.updateCache(usage)
             case .error:
