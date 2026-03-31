@@ -35,14 +35,14 @@ struct StatsView: View {
 
     @ViewBuilder
     private var statsContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HeatmapSection(records: records)
-            Divider()
+        VStack(alignment: .leading, spacing: 12) {
             SummaryStatsSection(records: records)
+            Divider()
+            StatCardsSection(records: records, weeklyUtils: weeklyUtils, capsHit7d: capsHit7d)
             Divider()
             BarChartSection(records: records)
             Divider()
-            StatCardsSection(records: records, weeklyUtils: weeklyUtils, capsHit7d: capsHit7d)
+            HeatmapSection(records: records)
         }
     }
 
