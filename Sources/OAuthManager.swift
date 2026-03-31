@@ -6,12 +6,14 @@ class OAuthManager {
         case noCredentials
         case invalidCredentials
         case tokenExpired
+        case rateLimited
 
         var errorDescription: String? {
             switch self {
             case .noCredentials: return "No Claude Code credentials found — run `claude` CLI and log in"
             case .invalidCredentials: return "Invalid credentials format in Keychain"
             case .tokenExpired: return "OAuth token expired — run `claude` to refresh"
+            case .rateLimited: return "OAuth refresh rate limited — backing off"
             }
         }
     }
@@ -43,7 +45,14 @@ class OAuthManager {
 
         // 5. Try refresh using refreshToken from keychain or file
         if let refreshToken = readRefreshTokenFromKeychain() ?? readRefreshTokenFromFile() {
-            return try await refreshAccessToken(refreshToken: refreshToken)
+            switch OAuthFailureGate.shouldAttemptRefresh() {
+            case .allowed:
+                return try await refreshAccessToken(refreshToken: refreshToken)
+            case .terminalBlocked:
+                throw OAuthError.noCredentials
+            case .transientBackoff:
+                throw OAuthError.rateLimited
+            }
         }
 
         throw OAuthError.noCredentials
@@ -192,21 +201,59 @@ class OAuthManager {
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            OAuthFailureGate.recordTransientFailure()
+            throw OAuthError.tokenExpired
+        }
+
+        switch httpResponse.statusCode {
+        case 200:
+            break
+        case 400:
+            OAuthFailureGate.recordTerminalFailure(reason: "invalid_grant")
+            throw OAuthError.tokenExpired
+        case 429:
+            OAuthFailureGate.recordTransientFailure()
+            throw OAuthError.rateLimited
+        default:
+            OAuthFailureGate.recordTransientFailure()
             throw OAuthError.tokenExpired
         }
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let accessToken = json["access_token"] as? String,
               !accessToken.isEmpty else {
+            OAuthFailureGate.recordTransientFailure()
             throw OAuthError.invalidCredentials
         }
 
         let expiresIn = json["expires_in"] as? Double ?? 3600
+        let newRefreshToken = json["refresh_token"] as? String ?? refreshToken
+
         cachedToken = accessToken
         cacheExpiry = Date().addingTimeInterval(expiresIn - 60)  // 1-minute buffer
 
+        OAuthFailureGate.recordSuccess()
+        persistCredentials(accessToken: accessToken, refreshToken: newRefreshToken, expiresIn: expiresIn)
+
         return accessToken
+    }
+
+    private func persistCredentials(accessToken: String, refreshToken: String, expiresIn: Double) {
+        let path = NSString(string: "~/.claude/.credentials.json").expandingTildeInPath
+        let dir = (path as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+
+        let expiresAt = (Date().timeIntervalSince1970 + expiresIn) * 1000
+        let json: [String: Any] = [
+            "claudeAiOauth": [
+                "accessToken": accessToken,
+                "refreshToken": refreshToken,
+                "expiresAt": expiresAt
+            ]
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) {
+            FileManager.default.createFile(atPath: path, contents: data)
+        }
     }
 }
