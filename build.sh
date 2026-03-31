@@ -19,11 +19,11 @@ swiftc -o "$BINARY_NAME" \
   -Osize \
   -parse-as-library \
   Sources/UsageModel.swift \
+  Sources/UsageStore.swift \
   Sources/OAuthManager.swift \
   Sources/LaunchAtLogin.swift \
   Sources/UsageServer.swift \
   Sources/UsageAPI.swift \
-  Sources/UsageStore.swift \
   Sources/StatsView.swift \
   Sources/PopoverView.swift \
   Sources/AppDelegate.swift \
