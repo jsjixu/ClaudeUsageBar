@@ -7,8 +7,6 @@ struct PopoverView: View {
     let onQuit: () -> Void
 
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
-    @State private var showSettings = false
-    @State private var remoteURL: String = UsageAPI.remoteURL ?? ""
     @State private var selectedTab: Int = 0
 
     var body: some View {
@@ -20,21 +18,6 @@ struct PopoverView: View {
                 Text("Claude Usage")
                     .font(.headline)
                 Spacer()
-                if UsageAPI.isRemoteMode {
-                    Text("REMOTE")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.blue))
-                } else {
-                    Text("LOCAL")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.green))
-                }
             }
             .padding(.bottom, 4)
 
@@ -100,50 +83,6 @@ struct PopoverView: View {
             .onChange(of: launchAtLogin) { _, newValue in
                 LaunchAtLogin.setEnabled(newValue)
             }
-
-            // Remote mode settings
-            DisclosureGroup("Remote Mode", isExpanded: $showSettings) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Connect to another Mac running ClaudeUsageBar to avoid 429 rate limits.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    TextField("http://host:9876", text: $remoteURL)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.caption)
-                    HStack {
-                        Button(remoteURL.isEmpty ? "Using Local" : "Save & Restart") {
-                            UsageAPI.setRemoteURL(remoteURL.isEmpty ? nil : remoteURL)
-                            // Relaunch app to apply mode change
-                            let url = Bundle.main.bundleURL
-                            let task = Process()
-                            task.launchPath = "/usr/bin/open"
-                            task.arguments = ["-a", url.path]
-                            try? task.run()
-                            NSApp.terminate(nil)
-                        }
-                        .font(.caption)
-                        .buttonStyle(.borderless)
-
-                        if !remoteURL.isEmpty {
-                            Button("Clear") {
-                                remoteURL = ""
-                                UsageAPI.setRemoteURL(nil)
-                                let url = Bundle.main.bundleURL
-                                let task = Process()
-                                task.launchPath = "/usr/bin/open"
-                                task.arguments = ["-a", url.path]
-                                try? task.run()
-                                NSApp.terminate(nil)
-                            }
-                            .font(.caption)
-                            .buttonStyle(.borderless)
-                            .foregroundColor(.red)
-                        }
-                    }
-                }
-                .padding(.top, 4)
-            }
-            .font(.caption)
 
             // Footer
             HStack {
