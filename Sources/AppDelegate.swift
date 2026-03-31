@@ -6,6 +6,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover!
     private var refreshTimer: Timer?
     private let api = UsageAPI()
+    private let store = UsageStore()
 
     private var currentState: UsageState = .loading
     private var lastRefresh: Date?
@@ -78,6 +79,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.lastUsage = usage
                 self.lastRefresh = Date()
                 self.consecutiveErrors = 0
+                self.store.insert(usage: usage)
                 // Feed cache to embedded server
                 self.usageServer?.updateCache(usage)
             case .error:
