@@ -39,7 +39,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create popover
         popover = NSPopover()
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 320, height: 500)
         updatePopoverContent()
 
         // Start embedded HTTP server in local mode (serves cache to remote clients)
@@ -141,7 +140,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updatePopoverContent() {
         let state = self.currentState
         let refresh = self.lastRefresh
-        popover.contentViewController = NSHostingController(
+        let hostingController = NSHostingController(
             rootView: PopoverView(
                 state: state,
                 lastRefresh: refresh,
@@ -153,5 +152,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             )
         )
+        // Let SwiftUI calculate the intrinsic content size
+        let fittingSize = hostingController.sizeThatFits(in: NSSize(width: 320, height: 10000))
+        popover.contentSize = NSSize(width: 320, height: min(fittingSize.height, 500))
+        popover.contentViewController = hostingController
     }
 }

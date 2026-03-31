@@ -51,7 +51,7 @@ struct PopoverView: View {
                     StatsView()
                         .padding(.vertical, 4)
                 }
-                .frame(height: 300)
+                .frame(maxHeight: 340)
             } else {
 
             switch state {
