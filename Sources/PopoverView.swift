@@ -160,7 +160,7 @@ struct PopoverView: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.gray.opacity(0.2))
+                        .fill(Color.primary.opacity(0.15))
                         .frame(height: 8)
                     RoundedRectangle(cornerRadius: 4)
                         .fill(gradientForUtilization(utilization))
