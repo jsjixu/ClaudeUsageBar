@@ -12,15 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build with swiftc
-        run: |
-          swiftc -o ClaudeUsageBar \
-            -target arm64-apple-macosx15.0 \
-            -framework AppKit \
-            -framework SwiftUI \
-            Sources/*.swift
+      - name: Build
+        run: bash build.sh
 
-      - name: Verify binary exists
-        run: |
-          file ClaudeUsageBar
-          ls -lh ClaudeUsageBar
+      - name: Verify binary
+        run: file ClaudeUsageBar
