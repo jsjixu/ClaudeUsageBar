@@ -149,6 +149,9 @@ class UsageAPI {
             let decoder = JSONDecoder()
             let usage = try decoder.decode(UsageResponse.self, from: data)
             return .loaded(usage)
+        } catch OAuthManager.OAuthError.rateLimited {
+            // OAuth refresh was rate-limited — back off with a default interval
+            return .rateLimited(retryAfter: 300)
         } catch is OAuthManager.OAuthError {
             return .noAuth
         } catch {
