@@ -144,12 +144,8 @@ struct HeatmapSection: View {
     private func heatColor(delta: Double) -> Color {
         guard delta > 0 else { return Color.primary.opacity(0.07) }
         let t = min(delta / maxDelta, 1.0)
-        // Light green → dark green
-        return Color(
-            red:   0.565 - t * 0.49,
-            green: 0.823 - t * 0.43,
-            blue:  0.565 - t * 0.49
-        )
+        // Light green → dark green (semantic, dark mode friendly)
+        return Color.green.opacity(0.2 + t * 0.8)
     }
 
     private func shortDate(_ s: String) -> String {
@@ -372,7 +368,7 @@ struct StatCardsSection: View {
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.05))
+        .background(Color.primary.opacity(0.08))
         .cornerRadius(8)
     }
 }
