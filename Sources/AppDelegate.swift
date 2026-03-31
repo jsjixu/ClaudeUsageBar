@@ -10,7 +10,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var currentState: UsageState = .loading
     private var lastRefresh: Date?
     private var lastUsage: UsageResponse?
-    private var usageServer: UsageServer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon
@@ -41,13 +40,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         updatePopoverContent()
 
-        // Start embedded HTTP server in local mode (serves cache to remote clients)
-        if !UsageAPI.isRemoteMode {
-            let server = UsageServer()
-            server.start()
-            self.usageServer = server
-        }
-
         // Initial fetch
         Task { await refresh() }
 
@@ -77,8 +69,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.lastRefresh = Date()
                 // Persist snapshot for history/heatmap
                 UsageStore.shared.record(usage)
-                // Feed cache to embedded server
-                self.usageServer?.updateCache(usage)
             default:
                 break
             }

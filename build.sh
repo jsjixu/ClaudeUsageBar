@@ -22,7 +22,6 @@ swiftc -o "$BINARY_NAME" \
   Sources/UsageStore.swift \
   Sources/OAuthManager.swift \
   Sources/LaunchAtLogin.swift \
-  Sources/UsageServer.swift \
   Sources/UsageAPI.swift \
   Sources/StatsView.swift \
   Sources/PopoverView.swift \
