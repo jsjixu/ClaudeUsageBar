@@ -9,6 +9,7 @@ struct PopoverView: View {
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var showSettings = false
     @State private var remoteURL: String = UsageAPI.remoteURL ?? ""
+    @State private var selectedTab: Int = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -36,6 +37,22 @@ struct PopoverView: View {
                 }
             }
             .padding(.bottom, 4)
+
+            // Tab bar
+            Picker("", selection: $selectedTab) {
+                Text("Usage").tag(0)
+                Text("Stats").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.small)
+
+            if selectedTab == 1 {
+                ScrollView {
+                    StatsView()
+                        .padding(.vertical, 4)
+                }
+                .frame(height: 300)
+            } else {
 
             switch state {
             case .loading:
@@ -68,6 +85,8 @@ struct PopoverView: View {
                 Label("Legacy CDP mode — update app", systemImage: "xmark.circle.fill")
                     .foregroundColor(.gray)
             }
+
+            } // end else (selectedTab == 0)
 
             Divider()
 

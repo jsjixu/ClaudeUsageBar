@@ -6,13 +6,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover!
     private var refreshTimer: Timer?
     private let api = UsageAPI()
-    private let store = UsageStore()
 
     private var currentState: UsageState = .loading
     private var lastRefresh: Date?
     private var lastUsage: UsageResponse?
     private var usageServer: UsageServer?
-    private var consecutiveErrors: Int = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon
@@ -41,7 +39,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create popover
         popover = NSPopover()
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 320, height: 340)
+        popover.contentSize = NSSize(width: 320, height: 500)
         updatePopoverContent()
 
         // Start embedded HTTP server in local mode (serves cache to remote clients)
@@ -78,14 +76,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             case .loaded(let usage):
                 self.lastUsage = usage
                 self.lastRefresh = Date()
-                self.consecutiveErrors = 0
-                self.store.insert(usage: usage)
+                // Persist snapshot for history/heatmap
+                UsageStore.shared.record(usage)
                 // Feed cache to embedded server
                 self.usageServer?.updateCache(usage)
-            case .error:
-                self.consecutiveErrors += 1
-            case .rateLimited:
-                self.consecutiveErrors += 1
             default:
                 break
             }
@@ -95,24 +89,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Adjust refresh rate: back off on errors/429, normal pace when healthy
+    /// Adjust refresh rate — delegates interval decision to FailureGate (single source of truth)
     private func adjustRefreshRate(for state: UsageState) {
-        let interval: TimeInterval
-        switch state {
-        case .loaded:
-            interval = 300  // 5 min when healthy
-        case .rateLimited(let retryAfter):
-            // Respect server's Retry-After, minimum 60s, max 10 min
-            interval = min(max(retryAfter, 60), 600)
-        case .error:
-            // Exponential backoff: 60s, 120s, 240s, 480s, capped at 600s
-            let backoff = 60.0 * pow(2.0, Double(min(consecutiveErrors - 1, 3)))
-            interval = min(backoff, 600)
-        case .authNeeded, .noAuth, .noCDP:
-            interval = 120  // Auth issues: check every 2 min (user may re-auth)
-        case .loading:
-            return
-        }
+        if case .loading = state { return }
+        let interval = api.gate.suggestedInterval
 
         if let timer = refreshTimer, timer.timeInterval == interval { return }
         refreshTimer?.invalidate()
