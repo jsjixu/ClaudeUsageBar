@@ -232,16 +232,11 @@ struct PopoverView: View {
     }
 
     private func openClaudeCode() {
-        let script = """
-        tell application "Terminal"
-            activate
-            do script "claude"
-        end tell
-        """
-        if let appleScript = NSAppleScript(source: script) {
-            var error: NSDictionary?
-            appleScript.executeAndReturnError(&error)
-        }
+        let tmpPath = (NSTemporaryDirectory() as NSString).appendingPathComponent("claude-login.command")
+        let script = "#!/bin/bash\nclaude\n"
+        try? script.write(toFile: tmpPath, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tmpPath)
+        NSWorkspace.shared.open(URL(fileURLWithPath: tmpPath))
     }
 
     private func openClaudeCodeInstall() {
