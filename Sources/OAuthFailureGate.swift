@@ -15,12 +15,14 @@ class OAuthFailureGate {
     // UserDefaults keys
     private static let terminalBlockedKey = "oauthTerminalBlocked"
     private static let terminalReasonKey = "oauthTerminalReason"
+    private static let terminalBlockedAtKey = "oauthTerminalBlockedAt"
     private static let transientBlockedUntilKey = "oauthTransientBlockedUntil"
     private static let transientFailureCountKey = "oauthTransientFailureCount"
     private static let keychainFingerprintKey = "oauthKeychainFingerprint"
 
     private static let baseInterval: TimeInterval = 300      // 5 min
     private static let maxInterval: TimeInterval = 21600     // 6 hours
+    private static let terminalTTL: TimeInterval = 1800      // 30 min — terminal block expires
 
     /// 检查是否允许刷新
     static func shouldAttemptRefresh() -> BlockStatus {
@@ -30,6 +32,14 @@ class OAuthFailureGate {
             if hasKeychainChanged() {
                 clearAll()
                 return .allowed
+            }
+            // TTL: terminal block expires after 30 min — allow retry
+            if let blockedAt = UserDefaults.standard.object(forKey: terminalBlockedAtKey) as? Double {
+                let elapsed = Date().timeIntervalSince1970 - blockedAt
+                if elapsed > terminalTTL {
+                    clearAll()
+                    return .allowed
+                }
             }
             let reason = UserDefaults.standard.string(forKey: terminalReasonKey) ?? "invalid_grant"
             return .terminalBlocked(reason: reason)
@@ -57,6 +67,7 @@ class OAuthFailureGate {
     static func recordTerminalFailure(reason: String = "invalid_grant") {
         UserDefaults.standard.set(true, forKey: terminalBlockedKey)
         UserDefaults.standard.set(reason, forKey: terminalReasonKey)
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: terminalBlockedAtKey)
         clearTransient()
         saveCurrentFingerprint()
     }
@@ -91,6 +102,7 @@ class OAuthFailureGate {
     private static func clearAll() {
         UserDefaults.standard.removeObject(forKey: terminalBlockedKey)
         UserDefaults.standard.removeObject(forKey: terminalReasonKey)
+        UserDefaults.standard.removeObject(forKey: terminalBlockedAtKey)
         clearTransient()
         UserDefaults.standard.removeObject(forKey: keychainFingerprintKey)
     }
