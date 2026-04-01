@@ -115,19 +115,24 @@ class OAuthFailureGate {
     // MARK: - Keychain fingerprint
 
     private static func saveCurrentFingerprint() {
-        if let fp = currentKeychainFingerprint() {
+        if let fp = currentCredentialsFingerprint() {
             UserDefaults.standard.set(fp, forKey: keychainFingerprintKey)
         }
     }
 
     private static func hasKeychainChanged() -> Bool {
         guard let saved = UserDefaults.standard.string(forKey: keychainFingerprintKey) else { return false }
-        guard let current = currentKeychainFingerprint() else { return false }
+        guard let current = currentCredentialsFingerprint() else { return false }
         return current != saved
     }
 
-    /// 读取 Keychain 中 Claude Code credentials 的 hash 作为 fingerprint
-    private static func currentKeychainFingerprint() -> String? {
+    /// Fingerprint over ALL credential sources (Keychain + file) so gate clears
+    /// when either source is updated (e.g. `claude login` updates file but not Keychain).
+    private static func currentCredentialsFingerprint() -> String? {
+        var hash: UInt64 = 5381
+        var hasAny = false
+
+        // Keychain data
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "Claude Code-credentials",
@@ -136,13 +141,18 @@ class OAuthFailureGate {
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-
-        // djb2 hash over content — stable across process runs
-        var hash: UInt64 = 5381
-        for byte in data {
-            hash = hash &* 31 &+ UInt64(byte)
+        if status == errSecSuccess, let data = result as? Data {
+            for byte in data { hash = hash &* 31 &+ UInt64(byte) }
+            hasAny = true
         }
-        return String(hash)
+
+        // File data
+        let filePath = NSString(string: "~/.claude/.credentials.json").expandingTildeInPath
+        if let fileData = FileManager.default.contents(atPath: filePath) {
+            for byte in fileData { hash = hash &* 31 &+ UInt64(byte) }
+            hasAny = true
+        }
+
+        return hasAny ? String(hash) : nil
     }
 }

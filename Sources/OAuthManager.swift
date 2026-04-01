@@ -58,11 +58,15 @@ class OAuthManager {
         throw OAuthError.noCredentials
     }
 
-    /// Check if any credential source has an unexpired access token (no refresh, no network).
+    /// Check if any credential source can provide a token (valid access token OR refreshable).
     func hasValidToken() -> Bool {
         if readFromCLIProxyAPI() != nil { return true }
         if readFromKeychain() != nil { return true }
         if readFromFile() != nil { return true }
+        // Also consider refreshable — if we have a refresh_token and gate allows it
+        if readRefreshTokenFromKeychain() != nil || readRefreshTokenFromFile() != nil {
+            if case .allowed = OAuthFailureGate.shouldAttemptRefresh() { return true }
+        }
         return false
     }
 
@@ -248,20 +252,47 @@ class OAuthManager {
     }
 
     private func persistCredentials(accessToken: String, refreshToken: String, expiresIn: Double) {
-        let path = NSString(string: "~/.claude/.credentials.json").expandingTildeInPath
-        let dir = (path as NSString).deletingLastPathComponent
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-
         let expiresAt = (Date().timeIntervalSince1970 + expiresIn) * 1000
-        let json: [String: Any] = [
+        let oauthPayload: [String: Any] = [
             "claudeAiOauth": [
                 "accessToken": accessToken,
                 "refreshToken": refreshToken,
                 "expiresAt": expiresAt
             ]
         ]
-        if let data = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) {
+
+        // Write to file
+        let path = NSString(string: "~/.claude/.credentials.json").expandingTildeInPath
+        let dir = (path as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: oauthPayload, options: .prettyPrinted) {
             FileManager.default.createFile(atPath: path, contents: data)
+        }
+
+        // Write to Keychain — keep both sources in sync
+        persistToKeychain(oauthPayload)
+    }
+
+    private func persistToKeychain(_ payload: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        let service = "Claude Code-credentials"
+
+        // Try update first
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service
+        ]
+        let attrs: [String: Any] = [
+            kSecValueData as String: data
+        ]
+        let status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
+
+        if status == errSecItemNotFound {
+            // Insert new
+            var newItem = query
+            newItem[kSecValueData as String] = data
+            newItem[kSecAttrAccount as String] = NSUserName()
+            SecItemAdd(newItem as CFDictionary, nil)
         }
     }
 }
