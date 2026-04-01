@@ -58,6 +58,14 @@ class OAuthManager {
         throw OAuthError.noCredentials
     }
 
+    /// Check if any credential source has an unexpired access token (no refresh, no network).
+    func hasValidToken() -> Bool {
+        if readFromCLIProxyAPI() != nil { return true }
+        if readFromKeychain() != nil { return true }
+        if readFromFile() != nil { return true }
+        return false
+    }
+
     /// Invalidate memory cache — call on 401 before retrying so refresh is attempted
     func invalidateCache() {
         cachedToken = nil

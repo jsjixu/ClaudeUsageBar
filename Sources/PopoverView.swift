@@ -54,13 +54,30 @@ struct PopoverView: View {
                 Label(msg, systemImage: "exclamationmark.triangle.fill")
                     .foregroundColor(.orange)
             case .authNeeded:
-                Label("Token expired — run `claude` to refresh", systemImage: "lock.fill")
-                    .foregroundColor(.red)
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Claude Code 登录已过期", systemImage: "lock.fill")
+                        .foregroundColor(.red)
+                    Button(action: { openClaudeCode() }) {
+                        Label("Open Claude Code", systemImage: "key.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                    Text("点击上方按钮，在弹出的终端中完成登录。\n登录成功后本 app 会自动恢复。")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             case .noAuth:
-                VStack(alignment: .leading, spacing: 4) {
-                    Label("No Claude Code credentials found", systemImage: "key.fill")
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("未找到 Claude Code", systemImage: "key.fill")
                         .foregroundColor(.orange)
-                    Text("Install Claude Code CLI and run `claude` to log in")
+                    Button(action: { openClaudeCodeInstall() }) {
+                        Label("Install Claude Code", systemImage: "arrow.down.circle.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                    Text("安装并登录 Claude Code 后，本 app 会自动连接。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -198,5 +215,24 @@ struct PopoverView: View {
         if seconds < 60 { return "just now" }
         if seconds < 3600 { return "\(seconds / 60)m ago" }
         return "\(seconds / 3600)h ago"
+    }
+
+    private func openClaudeCode() {
+        let script = """
+        tell application "Terminal"
+            activate
+            do script "claude"
+        end tell
+        """
+        if let appleScript = NSAppleScript(source: script) {
+            var error: NSDictionary?
+            appleScript.executeAndReturnError(&error)
+        }
+    }
+
+    private func openClaudeCodeInstall() {
+        if let url = URL(string: "https://docs.anthropic.com/en/docs/claude-code/overview") {
+            NSWorkspace.shared.open(url)
+        }
     }
 }

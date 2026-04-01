@@ -4,27 +4,19 @@ import Foundation
 
 /// Tracks consecutive API failures and suggests retry intervals to prevent hammering.
 class FailureGate {
-    private struct CredentialFingerprint: Equatable {
-        let modificationDate: Date
-        let fileSize: Int
-    }
-
     private(set) var consecutiveFailures: Int = 0
     private(set) var isTerminalAuthBlock: Bool = false
-    private var terminalFingerprint: CredentialFingerprint? = nil
     private(set) var suggestedInterval: TimeInterval = 300
 
     func recordSuccess() {
         consecutiveFailures = 0
         isTerminalAuthBlock = false
-        terminalFingerprint = nil
         suggestedInterval = 300
     }
 
     /// Mark a 401/403 terminal auth failure. Polls every 60s to detect credential changes.
     func recordAuthFailure() {
         isTerminalAuthBlock = true
-        terminalFingerprint = currentFingerprint()
         suggestedInterval = 60
     }
 
@@ -41,34 +33,15 @@ class FailureGate {
             suggestedInterval = 300  // Keep normal pace for first flake
             return true  // Suppressed
         }
-        // Exponential backoff: 5min base, doubling each failure after the first surfaced one
-        // failure 2 → 5min, failure 3 → 10min, failure 4 → 20min ... cap at 6h
         let doublings = max(consecutiveFailures - 2, 0)
         suggestedInterval = min(300.0 * pow(2.0, Double(doublings)), 21600)
         return false
     }
 
-    /// True if credentials file changed since terminal block was set (user re-authenticated).
-    func credentialsChanged() -> Bool {
-        guard isTerminalAuthBlock else { return false }
-        return currentFingerprint() != terminalFingerprint
-    }
-
     func clearTerminalBlock() {
         isTerminalAuthBlock = false
-        terminalFingerprint = nil
         consecutiveFailures = 0
         suggestedInterval = 300
-    }
-
-    private func currentFingerprint() -> CredentialFingerprint? {
-        let path = NSString(string: "~/.claude/.credentials.json").expandingTildeInPath
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-              let modDate = attrs[.modificationDate] as? Date,
-              let fileSize = attrs[.size] as? Int else {
-            return nil
-        }
-        return CredentialFingerprint(modificationDate: modDate, fileSize: fileSize)
     }
 }
 
@@ -80,9 +53,9 @@ class UsageAPI {
     private var lastGoodUsage: UsageResponse?
 
     func fetchUsage() async -> UsageState {
-        // Skip the API call if we're in a terminal auth block and credentials haven't changed
+        // Skip the API call if we're in a terminal auth block unless a valid token appeared
         if gate.isTerminalAuthBlock {
-            if gate.credentialsChanged() {
+            if oauthManager.hasValidToken() {
                 gate.clearTerminalBlock()
             } else {
                 return .authNeeded
