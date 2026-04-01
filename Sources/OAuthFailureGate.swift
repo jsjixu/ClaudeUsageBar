@@ -87,6 +87,11 @@ class OAuthFailureGate {
         saveCurrentFingerprint()
     }
 
+    /// Delegated CLI refresh 成功后清除所有 gate（CLI 拿到了新 token）
+    static func clearForDelegatedRefreshSuccess() {
+        clearAll()
+    }
+
     /// 刷新成功，清除所有 gate
     static func recordSuccess() {
         clearAll()

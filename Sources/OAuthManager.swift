@@ -1,6 +1,167 @@
 import Foundation
 import Security
 
+// MARK: - Delegated CLI Refresh
+
+/// Let `claude` CLI handle OAuth token refresh via Keychain.
+/// Instead of calling platform.claude.com directly (which triggers rate limits),
+/// we run `claude -p "ping"` which triggers the CLI's own refresh logic,
+/// then detect the Keychain change.
+enum DelegatedCLIRefresh {
+
+    enum Outcome {
+        case succeeded
+        case cliUnavailable
+        case skippedByCooldown
+        case failed(String)
+    }
+
+    // MARK: - Cooldown
+
+    private static let lastAttemptKey = "delegatedCLIRefreshLastAttemptAt"
+    private static let cooldownSecondsKey = "delegatedCLIRefreshCooldownSeconds"
+    private static let successCooldown: TimeInterval = 300   // 5 minutes
+    private static let failureCooldown: TimeInterval = 20    // 20 seconds
+
+    static func attempt() async -> Outcome {
+        if isInCooldown() {
+            return .skippedByCooldown
+        }
+
+        guard isClaudeCLIAvailable() else {
+            return .cliUnavailable
+        }
+
+        let baseline = currentKeychainFingerprint()
+
+        let touchSuccess = await runClaudePing(timeout: 10)
+
+        let changed = await waitForKeychainChange(from: baseline, timeout: 3.0, interval: 0.5)
+
+        if changed {
+            recordAttempt(cooldown: successCooldown)
+            return .succeeded
+        }
+
+        recordAttempt(cooldown: failureCooldown)
+        if !touchSuccess {
+            return .failed("claude -p ping exited with error or timed out")
+        }
+        return .failed("Keychain did not update after claude CLI ping")
+    }
+
+    static func isInCooldown() -> Bool {
+        let defaults = UserDefaults.standard
+        guard let lastAttempt = defaults.object(forKey: lastAttemptKey) as? Double else {
+            return false
+        }
+        let cooldown = defaults.double(forKey: cooldownSecondsKey)
+        guard cooldown > 0 else { return false }
+        return Date().timeIntervalSince1970 - lastAttempt < cooldown
+    }
+
+    private static func isClaudeCLIAvailable() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        process.arguments = ["claude"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private static func runClaudePing(timeout: TimeInterval) async -> Bool {
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = ["claude", "-p", "ping"]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+
+            var didResume = false
+            let lock = NSLock()
+
+            let timeoutItem = DispatchWorkItem {
+                lock.lock()
+                guard !didResume else { lock.unlock(); return }
+                didResume = true
+                lock.unlock()
+                if process.isRunning { process.terminate() }
+                continuation.resume(returning: false)
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timeoutItem)
+
+            process.terminationHandler = { proc in
+                timeoutItem.cancel()
+                lock.lock()
+                guard !didResume else { lock.unlock(); return }
+                didResume = true
+                lock.unlock()
+                continuation.resume(returning: proc.terminationStatus == 0)
+            }
+
+            do {
+                try process.run()
+            } catch {
+                timeoutItem.cancel()
+                lock.lock()
+                guard !didResume else { lock.unlock(); return }
+                didResume = true
+                lock.unlock()
+                continuation.resume(returning: false)
+            }
+        }
+    }
+
+    private static func currentKeychainFingerprint() -> UInt64 {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "Claude Code-credentials",
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess, let data = result as? Data else {
+            return 0
+        }
+
+        var hash: UInt64 = 5381
+        for byte in data { hash = hash &* 31 &+ UInt64(byte) }
+        return hash
+    }
+
+    private static func waitForKeychainChange(from baseline: UInt64, timeout: TimeInterval, interval: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if baseline != 0 && currentKeychainFingerprint() != baseline {
+                return true
+            }
+            do {
+                try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+            } catch {
+                return false
+            }
+        }
+        return baseline != 0 && currentKeychainFingerprint() != baseline
+    }
+
+    private static func recordAttempt(cooldown: TimeInterval) {
+        let defaults = UserDefaults.standard
+        defaults.set(Date().timeIntervalSince1970, forKey: lastAttemptKey)
+        defaults.set(cooldown, forKey: cooldownSecondsKey)
+    }
+}
+
+// MARK: - OAuthManager
+
 class OAuthManager {
     enum OAuthError: LocalizedError {
         case noCredentials
@@ -43,7 +204,20 @@ class OAuthManager {
             return token
         }
 
-        // 5. Try refresh using refreshToken from keychain or file
+        // 5. Delegated CLI Refresh — let `claude` CLI handle the refresh
+        let cliOutcome = await DelegatedCLIRefresh.attempt()
+        switch cliOutcome {
+        case .succeeded:
+            OAuthFailureGate.clearForDelegatedRefreshSuccess()
+            // Re-read from Keychain/File after CLI refreshed them
+            if let token = readFromKeychain() { return token }
+            if let token = readFromFile() { return token }
+            // CLI said success but we still can't read — fall through to OAuth refresh
+        case .cliUnavailable, .skippedByCooldown, .failed:
+            break  // Fall through to OAuth refresh
+        }
+
+        // 6. OAuth refresh — direct HTTP call (fallback)
         if let refreshToken = readRefreshTokenFromKeychain() ?? readRefreshTokenFromFile() {
             switch OAuthFailureGate.shouldAttemptRefresh() {
             case .allowed:
