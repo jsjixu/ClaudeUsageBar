@@ -49,7 +49,7 @@ class OAuthManager {
             case .allowed:
                 return try await refreshAccessToken(refreshToken: refreshToken)
             case .terminalBlocked:
-                throw OAuthError.noCredentials
+                throw OAuthError.tokenExpired
             case .transientBackoff:
                 throw OAuthError.rateLimited
             }

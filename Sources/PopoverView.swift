@@ -69,17 +69,31 @@ struct PopoverView: View {
                 }
             case .noAuth:
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("未找到 Claude Code", systemImage: "key.fill")
-                        .foregroundColor(.orange)
-                    Button(action: { openClaudeCodeInstall() }) {
-                        Label("Install Claude Code", systemImage: "arrow.down.circle.fill")
-                            .frame(maxWidth: .infinity)
+                    if isClaudeCodeInstalled() {
+                        Label("Claude Code 凭证已失效", systemImage: "key.fill")
+                            .foregroundColor(.orange)
+                        Button(action: { openClaudeCode() }) {
+                            Label("Open Claude Code", systemImage: "key.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                        Text("点击上方按钮，在弹出的终端中完成登录。\n登录成功后本 app 会自动恢复。")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Label("未找到 Claude Code", systemImage: "key.fill")
+                            .foregroundColor(.orange)
+                        Button(action: { openClaudeCodeInstall() }) {
+                            Label("Install Claude Code", systemImage: "arrow.down.circle.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                        Text("安装并登录 Claude Code 后，本 app 会自动连接。")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-                    Text("安装并登录 Claude Code 后，本 app 会自动连接。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
             case .noCDP:
                 Label("Legacy CDP mode — update app", systemImage: "xmark.circle.fill")
@@ -234,5 +248,17 @@ struct PopoverView: View {
         if let url = URL(string: "https://docs.anthropic.com/en/docs/claude-code/overview") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private func isClaudeCodeInstalled() -> Bool {
+        let paths = ["/usr/local/bin/claude", "/opt/homebrew/bin/claude"]
+        for path in paths {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return true
+            }
+        }
+        // Also check if ~/.claude directory exists (user has logged in before)
+        let claudeDir = NSString(string: "~/.claude").expandingTildeInPath
+        return FileManager.default.fileExists(atPath: claudeDir)
     }
 }
