@@ -20,11 +20,16 @@
 
 ## Features
 
-- **Real-time status bar** — Always visible: `⚡0% 📅24%` shows session (5h) and weekly (7d) usage at a glance
+- **Real-time status bar** — Always visible: `⚡35% 📅4%` shows session (5h) and weekly (7d) usage at a glance
+- **One-click login** — Click the login button to launch `claude auth login` in your browser — no terminal needed
+- **Auto-refresh after login** — Polls every 2 seconds after login; detects new credentials and updates usage automatically
+- **Delegated CLI Refresh** — When tokens expire, automatically triggers `claude -p ping` to refresh via CLI, avoiding OAuth rate limits
+- **Smart token resolution** — Multi-source credential priority: CLI Proxy API → memory cache → Keychain → credentials.json → Delegated CLI → OAuth refresh
+- **FailureGate protection** — Dual-layer failure gate: terminal block for `invalid_grant`, transient backoff for 429/network errors; Keychain+File fingerprint auto-unlocks when credentials change
 - **Reset countdowns** — Know exactly when each usage window resets
 - **Per-model tracking** — Separate Sonnet and Opus weekly usage
-- **Color-coded** — Green (<50%) → Orange (50-80%) → Red (>80%)
-- **Auto-refresh** — Every 5 minutes; 30s when recovering from errors
+- **Color-coded** — Green (<50%) → Orange (50–80%) → Red (>80%)
+- **Stats panel** — Usage history with Usage tab and Stats tab
 - **Multi-machine support** — Share usage data across Macs without hitting rate limits (see [Remote Mode](#remote-mode))
 - **Launch at Login** — One-click toggle in the popover
 - **Zero dependencies** — Pure Swift + SwiftUI + AppKit, no third-party libraries
@@ -33,10 +38,13 @@
 
 ## How It Works
 
-Reads OAuth credentials from Claude Code CLI (macOS Keychain) and calls the official Anthropic usage API.
+Reads OAuth credentials from Claude Code CLI (macOS Keychain or `~/.claude/.credentials.json`) and calls the official Anthropic usage API.
 
 ```
-Claude Code OAuth token (Keychain) → api.anthropic.com/api/oauth/usage → Menu bar
+Claude Code CLI credentials (Keychain / ~/.claude/.credentials.json)
+  → OAuthManager (multi-source with auto-refresh)
+  → api.anthropic.com/api/oauth/usage
+  → Menu bar + Popover
 ```
 
 No browser, no cookies, no Chrome DevTools Protocol.
@@ -75,6 +83,40 @@ xcode-select --install  # if not already installed
 ### 3. Enable Launch at Login
 
 Click the menu bar icon → toggle **Launch at Login**.
+
+## Authentication & Token Management
+
+ClaudeUsageBar uses a multi-source credential resolution chain to keep your session alive without manual intervention.
+
+### Credential Priority
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 | **CLI Proxy API** | Fastest — reads token directly from the Claude CLI daemon |
+| 2 | **Memory cache** | In-process cache from previous successful read |
+| 3 | **Keychain** | macOS Keychain stored by Claude Code CLI |
+| 4 | **credentials.json** | `~/.claude/.credentials.json` file fallback |
+| 5 | **Delegated CLI Refresh** | Runs `claude -p ping` to trigger a token refresh via CLI |
+| 6 | **OAuth refresh** | Direct OAuth refresh as last resort |
+
+### Delegated CLI Refresh
+
+When a token expires and direct OAuth refresh would hit rate limits, ClaudeUsageBar automatically runs `claude -p ping` in the background. This delegates the token refresh to the Claude CLI process, which handles its own OAuth flow and rate limiting gracefully. The app then picks up the refreshed token from Keychain or credentials.json.
+
+### FailureGate Dual-Layer Protection
+
+| Layer | Trigger | Behavior |
+|-------|---------|----------|
+| **Terminal block** | `invalid_grant` error | Stops retry attempts entirely; waits for credential change (Keychain or file fingerprint) to unlock |
+| **Transient backoff** | 429 / network errors | Exponential backoff; resumes automatically when errors clear |
+
+The gate monitors both Keychain and `~/.claude/.credentials.json` fingerprints. As soon as you log in again (via one-click login or `claude auth login`), the new credential fingerprint automatically unlocks the gate and resumes fetching.
+
+### One-Click Login Flow
+
+1. Click **Login** in the popover → `claude auth login` launches in your browser
+2. App polls every 2 seconds for new credentials
+3. Once detected, usage data loads automatically — no manual refresh needed
 
 ## Remote Mode
 
@@ -167,24 +209,29 @@ The client just needs HTTP access to the server's port 9876. Some options:
 
 | Menu Bar | Meaning |
 |----------|---------|
-| `⚡12% 📅24%` | Working normally |
+| `⚡35% 📅4%` | Working normally |
 | `⏳ ...` | Loading |
-| `🔒 Auth` | Token expired — run `claude` to refresh |
-| `🔑 No Key` | No credentials — install Claude Code CLI and log in |
-| `⚠️ Error` | API error (rate limit, network, etc.) |
+| `🔑 Login` | Not logged in — click Login button in popover |
+| `🔒 Auth` | Token expired — app will attempt Delegated CLI Refresh automatically |
+| `⚠️ Error` | API error (rate limit, network, etc.) — transient backoff in progress |
+| `[REMOTE]` badge | Running in client mode, reading from remote server |
+| `[LOCAL]` badge | Running in server mode, serving data to other Macs |
 
 ## Architecture
 
 ```
 Sources/
-├── main.swift           # App entry point
-├── AppDelegate.swift    # Status item + popover + adaptive refresh + Edit menu for paste
-├── OAuthManager.swift   # Keychain + file credential reader
-├── UsageAPI.swift       # Anthropic OAuth API (local) + raw TCP remote fetcher (client)
-├── UsageServer.swift    # Embedded HTTP server for multi-machine sharing
-├── UsageModel.swift     # Codable data models
-├── PopoverView.swift    # SwiftUI popover with progress bars + remote mode config
-└── LaunchAtLogin.swift  # LaunchAgent-based auto-start toggle
+├── main.swift             # App entry point
+├── AppDelegate.swift      # Status item + popover + adaptive refresh + credentials watcher + login poll
+├── OAuthManager.swift     # Multi-source credential reader + DelegatedCLIRefresh
+├── OAuthFailureGate.swift # Dual-layer failure gate with Keychain+File fingerprint
+├── UsageAPI.swift         # Anthropic OAuth usage API + remote TCP fetcher
+├── UsageServer.swift      # Embedded HTTP server for multi-machine sharing
+├── UsageModel.swift       # Codable data models
+├── UsageStore.swift       # Usage history persistence
+├── PopoverView.swift      # SwiftUI popover with usage bars + login flow + remote config
+├── StatsView.swift        # Usage statistics and heatmap
+└── LaunchAtLogin.swift    # LaunchAgent-based auto-start
 ```
 
 ## Configuration

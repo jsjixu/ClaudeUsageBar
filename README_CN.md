@@ -18,11 +18,16 @@
 
 ## 功能
 
-- **状态栏实时显示** — 常驻菜单栏：`⚡0% 📅24%`，一眼看到 Session（5h）和 Weekly（7d）用量
+- **状态栏实时显示** — 常驻菜单栏：`⚡35% 📅4%`，一眼看到 Session（5h）和 Weekly（7d）用量
+- **一键登录** — 点击登录按钮直接执行 `claude auth login` 弹浏览器登录，无需手动开终端
+- **登录后自动刷新** — 后台每 2 秒轮询检测新凭证，登录成功自动加载用量，无需手动刷新
+- **Delegated CLI Refresh** — Token 过期时，自动通过 `claude -p ping` 触发 CLI 刷新，避免 OAuth rate limit
+- **智能 Token 读取** — 多源凭证优先级：CLI Proxy API → 内存缓存 → Keychain → credentials.json → Delegated CLI → OAuth refresh
+- **FailureGate 双层防护** — terminal block（invalid_grant 彻底停止重试）+ transient backoff（429/网络错误指数退避），Keychain+File 双源 fingerprint 自动解锁
 - **重置倒计时** — 每个窗口还有多久回血，一目了然
 - **模型独立追踪** — Sonnet、Opus 周用量单独显示
-- **颜色分级** — 绿色（<50%）→ 橙色（50-80%）→ 红色（>80%）
-- **自动刷新** — 正常 5 分钟，异常时 30 秒快速恢复
+- **颜色分级** — 绿色（<50%）→ 橙色（50–80%）→ 红色（>80%）
+- **Stats 面板** — 历史用量统计（Usage tab + Stats tab）
 - **多机共享** — 多台 Mac 共享用量数据，不触发 429 限速（见 [远程模式](#远程模式)）
 - **开机自启** — 弹窗内一键开关
 - **零依赖** — 纯 Swift + SwiftUI + AppKit，无第三方库
@@ -31,10 +36,13 @@
 
 ## 工作原理
 
-读取 Claude Code CLI 的 OAuth 凭证（macOS 钥匙串），调用 Anthropic 官方用量 API。
+读取 Claude Code CLI 的 OAuth 凭证（macOS 钥匙串或 `~/.claude/.credentials.json`），调用 Anthropic 官方用量 API。
 
 ```
-Claude Code OAuth token (钥匙串) → api.anthropic.com/api/oauth/usage → 菜单栏
+Claude Code CLI credentials (Keychain / ~/.claude/.credentials.json)
+  → OAuthManager（多源凭证读取 + 自动刷新）
+  → api.anthropic.com/api/oauth/usage
+  → 菜单栏 + 弹窗
 ```
 
 不需要浏览器，不需要 Cookie，不需要 Chrome DevTools Protocol。
@@ -73,6 +81,40 @@ xcode-select --install  # 如果尚未安装
 ### 3. 开启开机自启
 
 点击菜单栏图标 → 打开 **Launch at Login** 开关。
+
+## 认证与 Token 管理
+
+ClaudeUsageBar 采用多源凭证解析链，自动维持 session 有效，无需手动干预。
+
+### 凭证优先级
+
+| 优先级 | 来源 | 说明 |
+|--------|------|------|
+| 1 | **CLI Proxy API** | 最快 — 直接从 Claude CLI 守护进程读取 token |
+| 2 | **内存缓存** | 进程内缓存上次成功读取的 token |
+| 3 | **Keychain** | macOS 钥匙串（由 Claude Code CLI 存入） |
+| 4 | **credentials.json** | `~/.claude/.credentials.json` 文件兜底 |
+| 5 | **Delegated CLI Refresh** | 执行 `claude -p ping` 触发 CLI 刷新 token |
+| 6 | **OAuth refresh** | 最后兜底：直接走 OAuth refresh 流程 |
+
+### Delegated CLI Refresh（委托 CLI 刷新）
+
+当 token 过期且直接 OAuth refresh 会触发 rate limit 时，ClaudeUsageBar 自动在后台执行 `claude -p ping`。这将 token 刷新委托给 Claude CLI 进程，由 CLI 自己处理 OAuth 流程和限速逻辑。刷新完成后，应用从 Keychain 或 credentials.json 自动取到新 token。
+
+### FailureGate 双层防护
+
+| 层级 | 触发条件 | 行为 |
+|------|---------|------|
+| **Terminal block** | `invalid_grant` 错误 | 彻底停止重试；等待 Keychain 或文件 fingerprint 变化（即重新登录）后自动解锁 |
+| **Transient backoff** | 429 / 网络错误 | 指数退避；错误消除后自动恢复 |
+
+FailureGate 同时监听 Keychain 和 `~/.claude/.credentials.json` 的 fingerprint。一旦你重新登录（通过一键登录或 `claude auth login`），新凭证的 fingerprint 变化会自动解锁 gate，恢复数据拉取。
+
+### 一键登录流程
+
+1. 点击弹窗中的 **Login** 按钮 → 浏览器自动打开 `claude auth login`
+2. 应用每 2 秒检测一次新凭证
+3. 检测到登录成功后，用量数据自动加载 — 无需手动刷新
 
 ## 远程模式
 
@@ -166,30 +208,35 @@ open "/Applications/Claude Usage Bar.app"
 
 **为什么用 raw TCP socket？**
 
-macOS 26 上，即使在 Info.plist 中设置了 `NSAllowsArbitraryLoads`，`URLSession` 仍然会拦截对 `.sgponte` 等非标准域名的 HTTP 明文请求。raw TCP socket（`InputStream`/`OutputStream`）工作在更底层，不受 ATS 约束。
+macOS 上，即使在 Info.plist 中设置了 `NSAllowsArbitraryLoads`，`URLSession` 仍然可能拦截对非标准域名的 HTTP 明文请求。raw TCP socket（`InputStream`/`OutputStream`）工作在更底层，不受 ATS 约束。
 
 ## 状态说明
 
 | 菜单栏显示 | 含义 |
 |-----------|------|
-| `⚡12% 📅24%` | 正常运行 |
+| `⚡35% 📅4%` | 正常运行 |
 | `⏳ ...` | 加载中 |
-| `🔒 Auth` | Token 过期 — 跑一下 `claude` 刷新 |
-| `🔑 No Key` | 无凭证 — 安装 Claude Code CLI 并登录 |
-| `⚠️ Error` | API 错误（限速、网络等） |
+| `🔑 Login` | 未登录 — 点击弹窗中的 Login 按钮 |
+| `🔒 Auth` | Token 过期 — 应用将自动尝试 Delegated CLI Refresh |
+| `⚠️ Error` | API 错误（限速、网络等）— 指数退避中 |
+| `[REMOTE]` 标签 | 客户端模式，从远程服务器读取数据 |
+| `[LOCAL]` 标签 | 服务端模式，向其他 Mac 提供数据 |
 
 ## 项目结构
 
 ```
 Sources/
-├── main.swift           # 应用入口
-├── AppDelegate.swift    # 状态栏 + 弹窗 + 自适应刷新 + Edit 菜单（修复粘贴）
-├── OAuthManager.swift   # 钥匙串 + 文件凭证读取
-├── UsageAPI.swift       # Anthropic OAuth API（本地）+ raw TCP 远程拉取（客户端）
-├── UsageServer.swift    # 内嵌 HTTP 服务器，支持多机共享
-├── UsageModel.swift     # Codable 数据模型
-├── PopoverView.swift    # SwiftUI 弹窗（进度条 + 远程模式配置）
-└── LaunchAtLogin.swift  # 基于 LaunchAgent 的开机自启开关
+├── main.swift             # 应用入口
+├── AppDelegate.swift      # 状态栏 + 弹窗 + 自适应刷新 + 凭证监听 + 登录轮询
+├── OAuthManager.swift     # 多源凭证读取 + DelegatedCLIRefresh
+├── OAuthFailureGate.swift # 双层 FailureGate（Keychain+File fingerprint 自动解锁）
+├── UsageAPI.swift         # Anthropic OAuth 用量 API + raw TCP 远程拉取
+├── UsageServer.swift      # 内嵌 HTTP 服务器，支持多机共享
+├── UsageModel.swift       # Codable 数据模型
+├── UsageStore.swift       # 历史用量持久化
+├── PopoverView.swift      # SwiftUI 弹窗（进度条 + 登录流程 + 远程模式配置）
+├── StatsView.swift        # 用量统计与热力图
+└── LaunchAtLogin.swift    # 基于 LaunchAgent 的开机自启开关
 ```
 
 ## 配置
