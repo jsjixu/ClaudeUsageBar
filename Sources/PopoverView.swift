@@ -232,13 +232,14 @@ struct PopoverView: View {
     }
 
     private func openClaudeLogin() {
-        let cmd = "echo '🦞 正在打开浏览器登录 Claude...' && claude auth login && echo '' && echo '✅ 登录成功！Usage Bar 会自动刷新。' || echo '❌ 登录失败，请重试。'"
-        let escaped = cmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        let appleScript = "tell application \"Terminal\"\nactivate\ndo script \"\(escaped)\"\nend tell"
-        if let script = NSAppleScript(source: appleScript) {
-            var error: NSDictionary?
-            script.executeAndReturnError(&error)
-        }
+        let tmpPath = (NSTemporaryDirectory() as NSString).appendingPathComponent("claude-auth-login.sh")
+        let script = "#!/bin/bash\necho '🦞 正在打开浏览器登录 Claude...'\nclaude auth login\nEXIT_CODE=$?\necho ''\nif [ $EXIT_CODE -eq 0 ]; then\n  echo '✅ 登录成功！Usage Bar 会自动刷新。'\nelse\n  echo '❌ 登录失败，请重试。'\nfi\nsleep 3"
+        try? script.write(toFile: tmpPath, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tmpPath)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-a", "Terminal", tmpPath]
+        try? process.run()
     }
 
     private func openClaudeCodeInstall() {
