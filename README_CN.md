@@ -33,7 +33,6 @@
 - **模型独立追踪** — Sonnet、Opus 周用量单独显示
 - **颜色分级** — 绿色（<50%）→ 橙色（50–80%）→ 红色（>80%）
 - **Stats 面板** — 历史用量统计（Usage tab + Stats tab）
-- **多机共享** — 多台 Mac 共享用量数据，不触发 429 限速（见 [远程模式](#远程模式)）
 - **开机自启** — 弹窗内一键开关
 - **零依赖** — 纯 Swift + SwiftUI + AppKit，无第三方库
 - **隐私优先** — 读取本地 OAuth 凭证，直接调 Anthropic API，不经过任何第三方
@@ -121,100 +120,6 @@ FailureGate 同时监听 Keychain 和 `~/.claude/.credentials.json` 的 fingerpr
 2. 应用每 2 秒检测一次新凭证
 3. 检测到登录成功后，用量数据自动加载 — 无需手动刷新
 
-## 远程模式
-
-**问题：** 多台 Mac 同时跑 ClaudeUsageBar 会触发 429 限速 — Anthropic 的用量 API 限频很严。
-
-**方案：** 一台 Mac 查 API（服务端），其他 Mac 读缓存数据（客户端）。客户端 API 调用次数为零。
-
-```
-┌─────────────────────┐         ┌─────────────────────┐
-│   Mac A（服务端）     │         │   Mac B（客户端）     │
-│                     │         │                      │
-│  OAuth → Anthropic  │  HTTP   │  Remote → Mac A      │
-│  每 5 分钟查一次     │◄───────►│  读取缓存 JSON       │
-│  + 开放 :9876 端口   │         │  0 次 API 调用       │
-│  标签: [LOCAL]      │         │  标签: [REMOTE]      │
-└─────────────────────┘         └──────────────────────┘
-```
-
-### 配置
-
-#### 服务端（查 Anthropic API 的那台 Mac）
-
-不需要任何配置 — 内嵌 HTTP 服务器在本地模式下自动启动，监听端口 **9876**。
-
-验证是否在运行：
-```bash
-curl http://127.0.0.1:9876/usage
-```
-
-#### 客户端（其他 Mac）
-
-**方式 A：先配置再启动**（推荐 — 避免任何 API 调用）
-
-```bash
-defaults write ClaudeUsageBar remote_usage_url "http://<服务端地址>:9876"
-open "/Applications/Claude Usage Bar.app"
-```
-
-**方式 B：在应用内配置**
-
-点击菜单栏图标 → 展开 **Remote Mode** → 输入服务端 URL → **Save & Restart**。
-
-### 网络方案
-
-客户端只需要能 HTTP 访问服务端的 9876 端口即可：
-
-| 方式 | URL 示例 | 说明 |
-|------|----------|------|
-| 局域网 | `http://192.168.1.100:9876` | 最简单 — 两台 Mac 在同一 Wi-Fi/网络 |
-| [Surge Ponte](https://manual.nssurge.com/others/ponte.html) | `http://mymac.sgponte:9876` | 随时随地访问家里的 Mac，无需端口转发 |
-| Tailscale | `http://my-mac-mini.tail12345.ts.net:9876` | 类似 Ponte 但跨平台 |
-| SSH 隧道 | `http://127.0.0.1:9876`（先 `ssh -L 9876:127.0.0.1:9876 user@server`） | 有 SSH 就能用 |
-
-### Surge Ponte 详细配置
-
-[Surge Ponte](https://manual.nssurge.com/others/ponte.html) 通过 Surge 的代理网格访问家庭网络中的设备 — 不需要公网 IP、不需要端口映射、不需要 VPN。
-
-**前置条件：**
-- 两台 Mac 都安装了 [Surge for Mac](https://nssurge.com)
-- 服务端 Mac（LOCAL 模式）开启了 Ponte
-- 两台 Mac 用同一个 Surge 账号 / iCloud 团队
-
-**步骤：**
-
-1. **服务端 Mac：** 在 Surge → Dashboard → Ponte 中启用。记下主机名（如 `my-mac-mini.sgponte`）。
-
-2. **客户端 Mac：** 确保 Surge 正在运行（增强模式或系统代理）。验证连通性：
-   ```bash
-   curl http://my-mac-mini.sgponte:9876/usage
-   ```
-
-3. **配置客户端 ClaudeUsageBar：**
-   ```bash
-   defaults write ClaudeUsageBar remote_usage_url "http://my-mac-mini.sgponte:9876"
-   ```
-
-**常见问题：**
-
-| 症状 | 原因 | 解决 |
-|------|------|------|
-| Connection refused | 服务端 ClaudeUsageBar 未运行 | 确认服务端在跑且 9876 端口在监听（`lsof -i :9876`） |
-| 无法解析 .sgponte | 客户端 Surge 未启用增强模式 | 开启 Surge Enhanced Mode |
-| ATS 拦截 HTTP | macOS App Transport Security | 本应用使用 raw TCP socket 绕过 ATS，确保安装最新版本 |
-| 数据显示 "Remote: error" | 网络不通或 URL 错误 | 先用 `curl` 验证 URL 可达 |
-
-### 内部实现
-
-- **本地模式（服务端）：** 应用启动时通过 `Network.framework` 的 `NWListener` 在 9876 端口开启轻量 TCP 服务器。每次从 Anthropic 拿到新数据，就缓存 JSON。任何 `GET /usage` 请求都返回缓存的 JSON，附带 `X-Cached-Age` 头表示数据年龄（秒）。
-
-- **远程模式（客户端）：** 不调 Anthropic API，而是通过 raw TCP socket（完全绕过 ATS）连接服务端，发送最简 HTTP/1.1 GET 请求，解码相同的 `UsageResponse` JSON。UI 完全一致 — 唯一区别是蓝色的 `REMOTE` 标签。
-
-**为什么用 raw TCP socket？**
-
-macOS 上，即使在 Info.plist 中设置了 `NSAllowsArbitraryLoads`，`URLSession` 仍然可能拦截对非标准域名的 HTTP 明文请求。raw TCP socket（`InputStream`/`OutputStream`）工作在更底层，不受 ATS 约束。
-
 ## 状态说明
 
 | 菜单栏显示 | 含义 |
@@ -224,8 +129,6 @@ macOS 上，即使在 Info.plist 中设置了 `NSAllowsArbitraryLoads`，`URLSes
 | `🔑 Login` | 未登录 — 点击弹窗中的 Login 按钮 |
 | `🔒 Auth` | Token 过期 — 应用将自动尝试 Delegated CLI Refresh |
 | `⚠️ Error` | API 错误（限速、网络等）— 指数退避中 |
-| `[REMOTE]` 标签 | 客户端模式，从远程服务器读取数据 |
-| `[LOCAL]` 标签 | 服务端模式，向其他 Mac 提供数据 |
 
 ## 项目结构
 
@@ -235,8 +138,7 @@ Sources/
 ├── AppDelegate.swift      # 状态栏 + 弹窗 + 自适应刷新 + 凭证监听 + 登录轮询
 ├── OAuthManager.swift     # 多源凭证读取 + DelegatedCLIRefresh
 ├── OAuthFailureGate.swift # 双层 FailureGate（Keychain+File fingerprint 自动解锁）
-├── UsageAPI.swift         # Anthropic OAuth 用量 API + raw TCP 远程拉取
-├── UsageServer.swift      # 内嵌 HTTP 服务器，支持多机共享
+├── UsageAPI.swift         # Anthropic OAuth 用量 API
 ├── UsageModel.swift       # Codable 数据模型
 ├── UsageStore.swift       # 历史用量持久化
 ├── PopoverView.swift      # SwiftUI 弹窗（进度条 + 登录流程 + 远程模式配置）
@@ -247,8 +149,6 @@ Sources/
 ## 配置
 
 单机使用无需任何配置，应用自动读取 Claude Code 凭证。
-
-多机使用见 [远程模式](#远程模式)。
 
 ## 许可证
 
