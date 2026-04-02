@@ -6,6 +6,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover!
     private var refreshTimer: Timer?
     private var credentialsWatcher: DispatchSourceFileSystemObject?
+    private var loginPollTimer: Timer?
     private let api = UsageAPI()
 
     private var currentState: UsageState = .loading
@@ -91,12 +92,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.lastRefresh = Date()
                 // Persist snapshot for history/heatmap
                 UsageStore.shared.record(usage)
+                // Stop login poll if running — we got data
+                self.loginPollTimer?.invalidate()
+                self.loginPollTimer = nil
             default:
                 break
             }
             self.updateMenuBarText()
             self.updatePopoverContent()
             self.adjustRefreshRate(for: result)
+        }
+    }
+
+    /// Start polling for credentials after user clicks login button
+    func startLoginPoll() {
+        loginPollTimer?.invalidate()
+        var attempts = 0
+        loginPollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
+            attempts += 1
+            if attempts > 30 { timer.invalidate(); return }  // 60s timeout
+            if self?.api.oauthManager.hasValidToken() == true {
+                timer.invalidate()
+                self?.loginPollTimer = nil
+                Task { await self?.refresh() }
+            }
         }
     }
 
@@ -161,6 +180,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 },
                 onQuit: {
                     NSApp.terminate(nil)
+                },
+                onLoginClicked: { [weak self] in
+                    self?.startLoginPoll()
                 }
             )
         )

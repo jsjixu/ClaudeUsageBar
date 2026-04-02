@@ -5,9 +5,11 @@ struct PopoverView: View {
     let lastRefresh: Date?
     let onRefresh: () -> Void
     let onQuit: () -> Void
+    var onLoginClicked: (() -> Void)? = nil
 
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var selectedTab: Int = 0
+    @State private var loginClicked = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -57,30 +59,48 @@ struct PopoverView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Claude Code 登录已过期", systemImage: "lock.fill")
                         .foregroundColor(.red)
-                    Button(action: { openClaudeLogin() }) {
-                        Label("重新登录", systemImage: "key.fill")
-                            .frame(maxWidth: .infinity)
+                    if loginClicked {
+                        Label("✅ 已打开登录页面", systemImage: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                            .font(.caption)
+                        Text("登录完成后点击下方 Refresh 刷新")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    } else {
+                        Button(action: { loginClicked = true; openClaudeLogin(); onLoginClicked?() }) {
+                            Label("重新登录", systemImage: "key.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                        Text("点击按钮打开浏览器登录。")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-                    Text("点击按钮打开终端自动登录。\n完成后用量会自动刷新。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
             case .noAuth:
                 VStack(alignment: .leading, spacing: 8) {
                     if isClaudeCodeInstalled() {
                         Label("需要登录 Claude Code", systemImage: "key.fill")
                             .foregroundColor(.orange)
-                        Button(action: { openClaudeLogin() }) {
-                            Label("登录 Claude Code", systemImage: "key.fill")
-                                .frame(maxWidth: .infinity)
+                        if loginClicked {
+                            Label("✅ 已打开登录页面", systemImage: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                                .font(.caption)
+                            Text("登录完成后点击下方 Refresh 刷新")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        } else {
+                            Button(action: { loginClicked = true; openClaudeLogin(); onLoginClicked?() }) {
+                                Label("登录 Claude Code", systemImage: "key.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.regular)
+                            Text("点击按钮打开浏览器登录。")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.regular)
-                        Text("点击按钮打开终端自动登录。\n完成后用量会自动刷新。")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
                     } else {
                         Label("未安装 Claude Code", systemImage: "key.fill")
                             .foregroundColor(.orange)

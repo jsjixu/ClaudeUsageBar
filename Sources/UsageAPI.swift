@@ -48,7 +48,7 @@ class FailureGate {
 // MARK: - UsageAPI
 
 class UsageAPI {
-    private let oauthManager = OAuthManager()
+    let oauthManager = OAuthManager()
     let gate = FailureGate()
     private var lastGoodUsage: UsageResponse?
 
