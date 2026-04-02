@@ -232,12 +232,9 @@ struct PopoverView: View {
     }
 
     private func openClaudeLogin() {
-        let appleScript = """
-        tell application "Terminal"
-            activate
-            do script "echo '\ud83e\udd9e \u6b63\u5728\u6253\u5f00\u6d4f\u89c8\u5668\u767b\u5f55 Claude...' && claude auth login && echo '' && echo '\u2705 \u767b\u5f55\u6210\u529f\uff01Usage Bar \u4f1a\u81ea\u52a8\u5237\u65b0\u3002' || echo '\u274c \u767b\u5f55\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5\u3002'"
-        end tell
-        """
+        let cmd = "echo '🦞 正在打开浏览器登录 Claude...' && claude auth login && echo '' && echo '✅ 登录成功！Usage Bar 会自动刷新。' || echo '❌ 登录失败，请重试。'"
+        let escaped = cmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let appleScript = "tell application \"Terminal\"\nactivate\ndo script \"\(escaped)\"\nend tell"
         if let script = NSAppleScript(source: appleScript) {
             var error: NSDictionary?
             script.executeAndReturnError(&error)
