@@ -11,11 +11,16 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/menubar.png" alt="Menu Bar" height="32">
+  <img src="screenshots/menubar.png" alt="Menu Bar" height="40">
 </p>
 
 <p align="center">
-  <img src="screenshots/popover.png" alt="Popover Detail View" width="400">
+  <img src="screenshots/popover.png" alt="Usage View" width="320">
+  <img src="screenshots/stats.png" alt="Stats Overview" width="320">
+</p>
+
+<p align="center">
+  <img src="screenshots/stats-chart.png" alt="Activity Charts" width="320">
 </p>
 
 ## Features

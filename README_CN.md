@@ -9,11 +9,16 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/menubar.png" alt="菜单栏" height="32">
+  <img src="screenshots/menubar.png" alt="菜单栏" height="40">
 </p>
 
 <p align="center">
-  <img src="screenshots/popover.png" alt="详情面板" width="400">
+  <img src="screenshots/popover.png" alt="用量面板" width="320">
+  <img src="screenshots/stats.png" alt="统计概览" width="320">
+</p>
+
+<p align="center">
+  <img src="screenshots/stats-chart.png" alt="活动图表" width="320">
 </p>
 
 ## 功能
