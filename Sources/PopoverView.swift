@@ -232,26 +232,16 @@ struct PopoverView: View {
     }
 
     private func openClaudeLogin() {
-        let tmpPath = (NSTemporaryDirectory() as NSString).appendingPathComponent("claude-login.command")
-        let script = """
-        #!/bin/bash
-        clear
-        echo "🦞 正在打开浏览器登录 Claude..."
-        echo ""
-        claude auth login
-        EXIT_CODE=$?
-        echo ""
-        if [ $EXIT_CODE -eq 0 ]; then
-            echo "✅ 登录成功！Usage Bar 会在几秒内自动刷新。"
-            echo "   你可以关闭此窗口了。"
-        else
-            echo "❌ 登录失败（错误码: $EXIT_CODE），请重试。"
-        fi
-        sleep 5
+        let appleScript = """
+        tell application "Terminal"
+            activate
+            do script "echo '\ud83e\udd9e \u6b63\u5728\u6253\u5f00\u6d4f\u89c8\u5668\u767b\u5f55 Claude...' && claude auth login && echo '' && echo '\u2705 \u767b\u5f55\u6210\u529f\uff01Usage Bar \u4f1a\u81ea\u52a8\u5237\u65b0\u3002' || echo '\u274c \u767b\u5f55\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5\u3002'"
+        end tell
         """
-        try? script.write(toFile: tmpPath, atomically: true, encoding: .utf8)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tmpPath)
-        NSWorkspace.shared.open(URL(fileURLWithPath: tmpPath))
+        if let script = NSAppleScript(source: appleScript) {
+            var error: NSDictionary?
+            script.executeAndReturnError(&error)
+        }
     }
 
     private func openClaudeCodeInstall() {
