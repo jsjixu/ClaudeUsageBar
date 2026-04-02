@@ -185,50 +185,70 @@ class OAuthManager {
     /// Read OAuth access token. Priority: CLIProxyAPI > Memory cache > Keychain > File > Refresh
     func getAccessToken() async throws -> String {
         // 1. CLIProxyAPI — has refresh_token, auto-renews
-        if let token = readFromCLIProxyAPI() {
+        let cliProxyToken = readFromCLIProxyAPI()
+        NSLog("[OAuthManager] CLIProxyAPI: %@", cliProxyToken != nil ? "HIT" : "MISS")
+        if let token = cliProxyToken {
             return token
         }
 
         // 2. Memory cache
+        let cacheHit = cachedToken != nil && cacheExpiry != nil && cacheExpiry! > Date()
+        NSLog("[OAuthManager] Cache: %@ (expiry: %@)", cacheHit ? "HIT" : "MISS", cacheExpiry.map { String(describing: $0) } ?? "nil")
         if let token = cachedToken, let expiry = cacheExpiry, expiry > Date() {
             return token
         }
 
         // 3. Keychain (Claude Code CLI) — valid (not expired) access token
-        if let token = readFromKeychain() {
+        let keychainToken = readFromKeychain()
+        NSLog("[OAuthManager] Keychain: %@", keychainToken != nil ? "HIT" : "MISS")
+        if let token = keychainToken {
             return token
         }
 
         // 4. File — valid (not expired) access token
-        if let token = readFromFile() {
+        let fileToken = readFromFile()
+        NSLog("[OAuthManager] File: %@", fileToken != nil ? "HIT" : "MISS")
+        if let token = fileToken {
             return token
         }
 
         // 5. Delegated CLI Refresh — let `claude` CLI handle the refresh
         let cliOutcome = await DelegatedCLIRefresh.attempt()
+        NSLog("[OAuthManager] DelegatedCLI outcome: %@", String(describing: cliOutcome))
         switch cliOutcome {
         case .succeeded:
             OAuthFailureGate.clearForDelegatedRefreshSuccess()
             // Re-read from Keychain/File after CLI refreshed them
-            if let token = readFromKeychain() { return token }
-            if let token = readFromFile() { return token }
+            let postCliKeychain = readFromKeychain()
+            NSLog("[OAuthManager] Post-CLI Keychain: %@", postCliKeychain != nil ? "HIT" : "MISS")
+            if let token = postCliKeychain { return token }
+            let postCliFile = readFromFile()
+            NSLog("[OAuthManager] Post-CLI File: %@", postCliFile != nil ? "HIT" : "MISS")
+            if let token = postCliFile { return token }
             // CLI said success but we still can't read — fall through to OAuth refresh
         case .cliUnavailable, .skippedByCooldown, .failed:
             break  // Fall through to OAuth refresh
         }
 
         // 6. OAuth refresh — direct HTTP call (fallback)
-        if let refreshToken = readRefreshTokenFromKeychain() ?? readRefreshTokenFromFile() {
-            switch OAuthFailureGate.shouldAttemptRefresh() {
+        let refreshTokenSrc = readRefreshTokenFromKeychain() ?? readRefreshTokenFromFile()
+        NSLog("[OAuthManager] OAuth refresh gate — refreshToken: %@", refreshTokenSrc != nil ? "present" : "nil")
+        if let refreshToken = refreshTokenSrc {
+            let gateDecision = OAuthFailureGate.shouldAttemptRefresh()
+            NSLog("[OAuthManager] OAuth refresh gate decision: %@", String(describing: gateDecision))
+            switch gateDecision {
             case .allowed:
                 return try await refreshAccessToken(refreshToken: refreshToken)
             case .terminalBlocked:
+                NSLog("[OAuthManager] throwing tokenExpired (terminalBlocked)")
                 throw OAuthError.tokenExpired
             case .transientBackoff:
+                NSLog("[OAuthManager] throwing rateLimited (transientBackoff)")
                 throw OAuthError.rateLimited
             }
         }
 
+        NSLog("[OAuthManager] throwing noCredentials")
         throw OAuthError.noCredentials
     }
 
@@ -315,21 +335,39 @@ class OAuthManager {
 
     private func readFromFile() -> String? {
         let path = NSString(string: "~/.claude/.credentials.json").expandingTildeInPath
-        guard let data = FileManager.default.contents(atPath: path),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let oauth = json["claudeAiOauth"] as? [String: Any],
-              let token = oauth["accessToken"] as? String,
-              !token.isEmpty else {
+        NSLog("[readFromFile] path: %@", path)
+        let data = FileManager.default.contents(atPath: path)
+        NSLog("[readFromFile] data: %@", data != nil ? "loaded \(data!.count) bytes" : "nil")
+        guard let data = data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            NSLog("[readFromFile] failed to parse JSON")
+            return nil
+        }
+        NSLog("[readFromFile] json keys: %@", json.keys.joined(separator: ", "))
+        guard let oauth = json["claudeAiOauth"] as? [String: Any] else {
+            NSLog("[readFromFile] claudeAiOauth key missing")
+            return nil
+        }
+        let accessTokenRaw = oauth["accessToken"]
+        NSLog("[readFromFile] accessToken: %@", accessTokenRaw != nil ? "present (\((accessTokenRaw as? String)?.prefix(10) ?? "?")...)" : "nil")
+        guard let token = accessTokenRaw as? String, !token.isEmpty else {
+            NSLog("[readFromFile] accessToken missing or empty")
             return nil
         }
 
         // Check expiry
-        if let expiresAt = oauth["expiresAt"] as? Double {
-            if Date(timeIntervalSince1970: expiresAt / 1000) < Date() {
+        let expiresAtRaw = oauth["expiresAt"]
+        NSLog("[readFromFile] expiresAt type: %@, value: %@", expiresAtRaw != nil ? String(describing: type(of: expiresAtRaw!)) : "nil", expiresAtRaw != nil ? String(describing: expiresAtRaw!) : "nil")
+        if let expiresAt = expiresAtRaw as? Double {
+            let expiryDate = Date(timeIntervalSince1970: expiresAt / 1000)
+            NSLog("[readFromFile] expiryDate: %@, now: %@, expired: %@", String(describing: expiryDate), String(describing: Date()), expiryDate < Date() ? "YES" : "NO")
+            if expiryDate < Date() {
+                NSLog("[readFromFile] token expired, returning nil")
                 return nil  // Expired, fall through to refresh
             }
         }
 
+        NSLog("[readFromFile] returning valid token")
         return token
     }
 

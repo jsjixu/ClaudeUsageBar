@@ -236,16 +236,16 @@ struct PopoverView: View {
         let script = """
         #!/bin/bash
         clear
-        echo "🦞 Claude Code 登录中..."
+        echo "🦞 正在打开浏览器登录 Claude..."
         echo ""
-        claude login
+        claude auth login
         EXIT_CODE=$?
         echo ""
         if [ $EXIT_CODE -eq 0 ]; then
             echo "✅ 登录成功！Usage Bar 会在几秒内自动刷新。"
             echo "   你可以关闭此窗口了。"
         else
-            echo "❌ 登录失败，请重试。"
+            echo "❌ 登录失败（错误码: $EXIT_CODE），请重试。"
         fi
         sleep 5
         """

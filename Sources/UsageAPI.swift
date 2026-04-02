@@ -88,6 +88,7 @@ class UsageAPI {
     private func doFetch(retried: Bool) async -> UsageState {
         do {
             let token = try await oauthManager.getAccessToken()
+            NSLog("[UsageAPI] getAccessToken result: %@", String(token.prefix(15)))
 
             guard let url = URL(string: "https://api.anthropic.com/api/oauth/usage") else {
                 return .error("Invalid URL")
@@ -100,6 +101,7 @@ class UsageAPI {
             let (data, response) = try await URLSession.shared.data(for: request)
 
             if let httpResponse = response as? HTTPURLResponse {
+                NSLog("[UsageAPI] HTTP status: %d", httpResponse.statusCode)
                 if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
                     if !retried {
                         // Invalidate cache and retry — OAuthManager will attempt a token refresh
@@ -123,11 +125,14 @@ class UsageAPI {
             let usage = try decoder.decode(UsageResponse.self, from: data)
             return .loaded(usage)
         } catch OAuthManager.OAuthError.rateLimited {
+            NSLog("[UsageAPI] catch OAuthError: rateLimited")
             // OAuth refresh was rate-limited — back off with a default interval
             return .rateLimited(retryAfter: 300)
-        } catch is OAuthManager.OAuthError {
+        } catch let error as OAuthManager.OAuthError {
+            NSLog("[UsageAPI] catch OAuthError: %@", error.localizedDescription)
             return .noAuth
         } catch {
+            NSLog("[UsageAPI] catch generic error: %@", error.localizedDescription)
             return .error(error.localizedDescription)
         }
     }
