@@ -5,6 +5,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var refreshTimer: Timer?
+    private var credentialsWatcher: DispatchSourceFileSystemObject?
     private let api = UsageAPI()
 
     private var currentState: UsageState = .loading
@@ -47,6 +48,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { await self?.refresh() }
         }
+
+        startCredentialsWatcher()
+    }
+
+    private func startCredentialsWatcher() {
+        let dir = NSString(string: "~/.claude").expandingTildeInPath
+        // Create directory if needed
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let fd = open(dir, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd, eventMask: .write, queue: .main)
+        source.setEventHandler { [weak self] in
+            // Debounce 2s for file writes to settle
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                Task { await self?.refresh() }
+            }
+        }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+        credentialsWatcher = source
     }
 
     @objc private func togglePopover() {

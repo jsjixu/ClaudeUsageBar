@@ -57,40 +57,40 @@ struct PopoverView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Claude Code 登录已过期", systemImage: "lock.fill")
                         .foregroundColor(.red)
-                    Button(action: { openClaudeCode() }) {
-                        Label("Open Claude Code", systemImage: "key.fill")
+                    Button(action: { openClaudeLogin() }) {
+                        Label("重新登录", systemImage: "key.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.regular)
-                    Text("点击上方按钮，在弹出的终端中完成登录。\n登录成功后本 app 会自动恢复。")
+                    Text("点击按钮打开终端自动登录。\n完成后用量会自动刷新。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             case .noAuth:
                 VStack(alignment: .leading, spacing: 8) {
                     if isClaudeCodeInstalled() {
-                        Label("Claude Code 凭证已失效", systemImage: "key.fill")
+                        Label("需要登录 Claude Code", systemImage: "key.fill")
                             .foregroundColor(.orange)
-                        Button(action: { openClaudeCode() }) {
-                            Label("Open Claude Code", systemImage: "key.fill")
+                        Button(action: { openClaudeLogin() }) {
+                            Label("登录 Claude Code", systemImage: "key.fill")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.regular)
-                        Text("点击上方按钮，在弹出的终端中完成登录。\n登录成功后本 app 会自动恢复。")
+                        Text("点击按钮打开终端自动登录。\n完成后用量会自动刷新。")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     } else {
-                        Label("未找到 Claude Code", systemImage: "key.fill")
+                        Label("未安装 Claude Code", systemImage: "key.fill")
                             .foregroundColor(.orange)
                         Button(action: { openClaudeCodeInstall() }) {
-                            Label("Install Claude Code", systemImage: "arrow.down.circle.fill")
+                            Label("安装 Claude Code", systemImage: "arrow.down.circle.fill")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.regular)
-                        Text("安装并登录 Claude Code 后，本 app 会自动连接。")
+                        Text("需要先安装 Claude Code CLI。\n安装后点击上方登录按钮。")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -231,9 +231,24 @@ struct PopoverView: View {
         return "\(seconds / 3600)h ago"
     }
 
-    private func openClaudeCode() {
+    private func openClaudeLogin() {
         let tmpPath = (NSTemporaryDirectory() as NSString).appendingPathComponent("claude-login.command")
-        let script = "#!/bin/bash\nclaude\n"
+        let script = """
+        #!/bin/bash
+        clear
+        echo "🦞 Claude Code 登录中..."
+        echo ""
+        claude login
+        EXIT_CODE=$?
+        echo ""
+        if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ 登录成功！Usage Bar 会在几秒内自动刷新。"
+            echo "   你可以关闭此窗口了。"
+        else
+            echo "❌ 登录失败，请重试。"
+        fi
+        sleep 5
+        """
         try? script.write(toFile: tmpPath, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tmpPath)
         NSWorkspace.shared.open(URL(fileURLWithPath: tmpPath))
