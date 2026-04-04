@@ -47,6 +47,20 @@ class FailureGate {
 
 // MARK: - UsageAPI
 
+/// File-based debug logger (NSLog is invisible on macOS 26)
+func debugLog(_ msg: String) {
+    let ts = ISO8601DateFormatter().string(from: Date())
+    let line = "\(ts) \(msg)\n"
+    let path = NSString(string: "~/.openclaw/logs/usage-bar-debug.log").expandingTildeInPath
+    if let fh = FileHandle(forWritingAtPath: path) {
+        fh.seekToEndOfFile()
+        fh.write(line.data(using: .utf8)!)
+        fh.closeFile()
+    } else {
+        FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
+    }
+}
+
 class UsageAPI {
     let oauthManager = OAuthManager()
     let gate = FailureGate()
@@ -95,7 +109,7 @@ class UsageAPI {
     private func doFetch(retried: Bool) async -> UsageState {
         do {
             let token = try await oauthManager.getAccessToken()
-            NSLog("[UsageAPI] getAccessToken result: %@", String(token.prefix(15)))
+            debugLog("[UsageAPI] token: \(token.prefix(15))...")
 
             guard let url = URL(string: "https://api.anthropic.com/api/oauth/usage") else {
                 return .error("Invalid URL")
@@ -108,20 +122,21 @@ class UsageAPI {
             let (data, response) = try await session.data(for: request)
 
             if let httpResponse = response as? HTTPURLResponse {
-                NSLog("[UsageAPI] HTTP status: %d", httpResponse.statusCode)
+                debugLog("[UsageAPI] HTTP status: \(httpResponse.statusCode)")
                 if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
                     if !retried {
-                        // Invalidate cache and retry — OAuthManager will attempt a token refresh
+                        debugLog("[UsageAPI] 401/403 — invalidating cache, will retry")
                         oauthManager.invalidateCache()
-                        try? await Task.sleep(nanoseconds: 3_000_000_000)  // 3s wait (was 2s)
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
                         return await doFetch(retried: true)
                     }
-                    NSLog("[UsageAPI] 401/403 after retry — entering authNeeded")
+                    debugLog("[UsageAPI] 401/403 after retry — entering authNeeded")
                     return .authNeeded
                 }
                 if httpResponse.statusCode == 429 {
                     let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After")
                         .flatMap { Double($0) } ?? 60
+                    debugLog("[UsageAPI] 429 from usage API! retryAfter=\(retryAfter)")
                     return .rateLimited(retryAfter: retryAfter)
                 }
                 if httpResponse.statusCode != 200 {
@@ -133,14 +148,14 @@ class UsageAPI {
             let usage = try decoder.decode(UsageResponse.self, from: data)
             return .loaded(usage)
         } catch OAuthManager.OAuthError.rateLimited {
-            NSLog("[UsageAPI] catch OAuthError: rateLimited")
+            debugLog("[UsageAPI] OAuthError.rateLimited — OAuth refresh endpoint returned 429")
             // OAuth refresh was rate-limited — back off with a default interval
             return .rateLimited(retryAfter: 300)
         } catch let error as OAuthManager.OAuthError {
-            NSLog("[UsageAPI] catch OAuthError: %@", error.localizedDescription)
+            debugLog("[UsageAPI] OAuthError: \(error.localizedDescription)")
             return .noAuth
         } catch {
-            NSLog("[UsageAPI] catch generic error: %@", error.localizedDescription)
+            debugLog("[UsageAPI] generic error: \(error.localizedDescription)")
             return .error(error.localizedDescription)
         }
     }

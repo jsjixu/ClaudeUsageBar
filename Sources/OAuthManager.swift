@@ -186,35 +186,35 @@ class OAuthManager {
     func getAccessToken() async throws -> String {
         // 1. CLIProxyAPI — has refresh_token, auto-renews
         let cliProxyToken = readFromCLIProxyAPI()
-        NSLog("[OAuthManager] CLIProxyAPI: %@", cliProxyToken != nil ? "HIT" : "MISS")
+        debugLog("[OAuth] CLIProxyAPI: \(cliProxyToken != nil ? "HIT" : "MISS")")
         if let token = cliProxyToken {
             return token
         }
 
         // 2. Memory cache
         let cacheHit = cachedToken != nil && cacheExpiry != nil && cacheExpiry! > Date()
-        NSLog("[OAuthManager] Cache: %@ (expiry: %@)", cacheHit ? "HIT" : "MISS", cacheExpiry.map { String(describing: $0) } ?? "nil")
+        debugLog("[OAuth] Cache: \(cacheHit ? "HIT" : "MISS")")
         if let token = cachedToken, let expiry = cacheExpiry, expiry > Date() {
             return token
         }
 
         // 3. Keychain (Claude Code CLI) — valid (not expired) access token
         let keychainToken = readFromKeychain()
-        NSLog("[OAuthManager] Keychain: %@", keychainToken != nil ? "HIT" : "MISS")
+        debugLog("[OAuth] Keychain: \(keychainToken != nil ? "HIT" : "MISS")")
         if let token = keychainToken {
             return token
         }
 
         // 4. File — valid (not expired) access token
         let fileToken = readFromFile()
-        NSLog("[OAuthManager] File: %@", fileToken != nil ? "HIT" : "MISS")
+        debugLog("[OAuth] File: \(fileToken != nil ? "HIT" : "MISS")")
         if let token = fileToken {
             return token
         }
 
         // 5. Delegated CLI Refresh — let `claude` CLI handle the refresh
         let cliOutcome = await DelegatedCLIRefresh.attempt()
-        NSLog("[OAuthManager] DelegatedCLI outcome: %@", String(describing: cliOutcome))
+        debugLog("[OAuth] DelegatedCLI outcome: \(cliOutcome)")
         switch cliOutcome {
         case .succeeded:
             OAuthFailureGate.clearForDelegatedRefreshSuccess()
