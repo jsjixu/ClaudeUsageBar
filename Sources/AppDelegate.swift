@@ -50,8 +50,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         updatePopoverContent()
 
-        // Initial fetch
-        Task { await refresh() }
+        // Initial fetch — delay 10s to avoid IP-level rate limits after rapid restarts
+        Task {
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            await refresh()
+        }
 
         // Refresh every 5 minutes
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
