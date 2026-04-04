@@ -51,6 +51,13 @@ class UsageAPI {
     let oauthManager = OAuthManager()
     let gate = FailureGate()
     private var lastGoodUsage: UsageResponse?
+    /// Use ephemeral session to avoid HTTP/2 connection reuse after 429
+    private let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 30
+        return URLSession(configuration: config)
+    }()
 
     func fetchUsage() async -> UsageState {
         // Skip the API call if we're in a terminal auth block unless a valid token appeared
@@ -98,7 +105,7 @@ class UsageAPI {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
 
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
 
             if let httpResponse = response as? HTTPURLResponse {
                 NSLog("[UsageAPI] HTTP status: %d", httpResponse.statusCode)
