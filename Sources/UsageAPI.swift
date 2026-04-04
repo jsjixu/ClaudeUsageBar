@@ -106,9 +106,10 @@ class UsageAPI {
                     if !retried {
                         // Invalidate cache and retry — OAuthManager will attempt a token refresh
                         oauthManager.invalidateCache()
-                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)  // 3s wait (was 2s)
                         return await doFetch(retried: true)
                     }
+                    NSLog("[UsageAPI] 401/403 after retry — entering authNeeded")
                     return .authNeeded
                 }
                 if httpResponse.statusCode == 429 {

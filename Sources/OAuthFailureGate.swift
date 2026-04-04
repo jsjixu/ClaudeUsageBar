@@ -20,9 +20,9 @@ class OAuthFailureGate {
     private static let transientFailureCountKey = "oauthTransientFailureCount"
     private static let keychainFingerprintKey = "oauthKeychainFingerprint"
 
-    private static let baseInterval: TimeInterval = 300      // 5 min
-    private static let maxInterval: TimeInterval = 21600     // 6 hours
-    private static let terminalTTL: TimeInterval = 1800      // 30 min — terminal block expires
+    private static let baseInterval: TimeInterval = 60       // 1 min (was 5 min — too aggressive)
+    private static let maxInterval: TimeInterval = 3600      // 1 hour (was 6 hours — way too long)
+    private static let terminalTTL: TimeInterval = 600       // 10 min (was 30 min — too long to recover)
 
     /// 检查是否允许刷新
     static func shouldAttemptRefresh() -> BlockStatus {

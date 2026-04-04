@@ -13,6 +13,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastRefresh: Date?
     private var lastUsage: UsageResponse?
 
+    /// Global throttle: minimum seconds between consecutive API calls.
+    /// Prevents credential watcher, timer, and manual refresh from piling up.
+    private let minimumRefreshInterval: TimeInterval = 120  // 2 minutes
+    private var lastAPICallTime: Date?
+    private var isRefreshing = false
+    /// Fingerprint of credentials at last watcher trigger — avoids spurious refreshes
+    private var lastWatcherFingerprint: String?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon
         NSApp.setActivationPolicy(.accessory)
@@ -62,14 +70,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd, eventMask: .write, queue: .main)
         source.setEventHandler { [weak self] in
-            // Debounce 2s for file writes to settle
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                Task { await self?.refresh() }
+            // Debounce 5s for file writes to settle (was 2s — too aggressive)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                guard let self = self else { return }
+                // Only trigger refresh if credentials ACTUALLY changed
+                let currentFP = self.credentialsFingerprint()
+                if currentFP == self.lastWatcherFingerprint {
+                    return  // Not a credential change, skip
+                }
+                self.lastWatcherFingerprint = currentFP
+                NSLog("[CredWatch] Credentials changed — triggering refresh")
+                Task { await self.refresh() }
             }
         }
         source.setCancelHandler { close(fd) }
         source.resume()
         credentialsWatcher = source
+        // Seed initial fingerprint
+        lastWatcherFingerprint = credentialsFingerprint()
+    }
+
+    /// Fast fingerprint over credential files (not full content, just mtime+size)
+    private func credentialsFingerprint() -> String {
+        var parts: [String] = []
+        let paths = [
+            NSString(string: "~/.claude/.credentials.json").expandingTildeInPath,
+            NSString(string: "~/.claude/credentials.json").expandingTildeInPath
+        ]
+        for path in paths {
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: path) {
+                let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+                let size = (attrs[.size] as? Int) ?? 0
+                parts.append("\(path):\(mtime):\(size)")
+            }
+        }
+        // Also check Keychain fingerprint
+        let keychainFP = keychainDataHash()
+        parts.append("kc:\(keychainFP)")
+        return parts.joined(separator: "|")
+    }
+
+    private func keychainDataHash() -> UInt64 {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "Claude Code-credentials",
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return 0 }
+        var hash: UInt64 = 5381
+        for byte in data { hash = hash &* 31 &+ UInt64(byte) }
+        return hash
     }
 
     @objc private func togglePopover() {
@@ -82,8 +135,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func refresh() async {
+    private func refresh(force: Bool = false) async {
+        // Global throttle — prevent multiple sources from piling up API calls
+        if !force, let lastCall = lastAPICallTime {
+            let elapsed = Date().timeIntervalSince(lastCall)
+            if elapsed < minimumRefreshInterval {
+                NSLog("[Refresh] Throttled — %.0fs since last call (min %.0fs)", elapsed, minimumRefreshInterval)
+                return
+            }
+        }
+
+        // Prevent concurrent refreshes
+        guard !isRefreshing else {
+            NSLog("[Refresh] Already refreshing, skipping")
+            return
+        }
+        isRefreshing = true
+        lastAPICallTime = Date()
+
         let result = await api.fetchUsage()
+        isRefreshing = false
+
         await MainActor.run {
             self.currentState = result
             switch result {
@@ -176,7 +248,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 state: state,
                 lastRefresh: refresh,
                 onRefresh: { [weak self] in
-                    Task { await self?.refresh() }
+                    Task { await self?.refresh(force: true) }  // Manual refresh bypasses throttle
                 },
                 onQuit: {
                     NSApp.terminate(nil)
