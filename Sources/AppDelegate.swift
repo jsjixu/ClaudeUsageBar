@@ -14,11 +14,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastUsage: UsageResponse?
 
     /// Global throttle: minimum seconds between consecutive API calls.
-    /// Prevents credential watcher, timer, and manual refresh from piling up.
     private let minimumRefreshInterval: TimeInterval = 120  // 2 minutes
     private var lastAPICallTime: Date?
     private var isRefreshing = false
-    /// Fingerprint of credentials at last watcher trigger — avoids spurious refreshes
+    /// Fingerprint of credentials at last watcher trigger
     private var lastWatcherFingerprint: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -50,15 +49,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         updatePopoverContent()
 
-        // Initial fetch — delay 10s to avoid IP-level rate limits after rapid restarts
-        Task {
-            try? await Task.sleep(nanoseconds: 10_000_000_000)
-            await refresh()
+        // Initial fetch — use Task.detached for launchd/LSUIElement compatibility
+        // (main RunLoop may not pump GCD/Timer callbacks when launched via launchd)
+        Task.detached { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await self?.refresh()
         }
 
         // Refresh every 5 minutes
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
-            Task { await self?.refresh() }
+            Task.detached { await self?.refresh() }
         }
 
         startCredentialsWatcher()
@@ -66,34 +66,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startCredentialsWatcher() {
         let dir = NSString(string: "~/.claude").expandingTildeInPath
-        // Create directory if needed
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let fd = open(dir, O_EVTONLY)
         guard fd >= 0 else { return }
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd, eventMask: .write, queue: .main)
         source.setEventHandler { [weak self] in
-            // Debounce 5s for file writes to settle (was 2s — too aggressive)
+            // Debounce 5s for file writes to settle
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
                 guard let self = self else { return }
                 // Only trigger refresh if credentials ACTUALLY changed
                 let currentFP = self.credentialsFingerprint()
                 if currentFP == self.lastWatcherFingerprint {
-                    return  // Not a credential change, skip
+                    return
                 }
                 self.lastWatcherFingerprint = currentFP
-                NSLog("[CredWatch] Credentials changed — triggering refresh")
-                Task { await self.refresh() }
+                Task.detached { await self.refresh() }
             }
         }
         source.setCancelHandler { close(fd) }
         source.resume()
         credentialsWatcher = source
-        // Seed initial fingerprint
         lastWatcherFingerprint = credentialsFingerprint()
     }
 
-    /// Fast fingerprint over credential files (not full content, just mtime+size)
+    /// Fast fingerprint over credential files (mtime+size)
     private func credentialsFingerprint() -> String {
         var parts: [String] = []
         let paths = [
@@ -107,7 +104,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 parts.append("\(path):\(mtime):\(size)")
             }
         }
-        // Also check Keychain fingerprint
         let keychainFP = keychainDataHash()
         parts.append("kc:\(keychainFP)")
         return parts.joined(separator: "|")
@@ -139,20 +135,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refresh(force: Bool = false) async {
-        // Global throttle — prevent multiple sources from piling up API calls
+        // Global throttle
         if !force, let lastCall = lastAPICallTime {
             let elapsed = Date().timeIntervalSince(lastCall)
-            if elapsed < minimumRefreshInterval {
-                NSLog("[Refresh] Throttled — %.0fs since last call (min %.0fs)", elapsed, minimumRefreshInterval)
-                return
-            }
+            if elapsed < minimumRefreshInterval { return }
         }
 
-        // Prevent concurrent refreshes
-        guard !isRefreshing else {
-            NSLog("[Refresh] Already refreshing, skipping")
-            return
-        }
+        guard !isRefreshing else { return }
         isRefreshing = true
         lastAPICallTime = Date()
 
@@ -165,9 +154,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             case .loaded(let usage):
                 self.lastUsage = usage
                 self.lastRefresh = Date()
-                // Persist snapshot for history/heatmap
                 UsageStore.shared.record(usage)
-                // Stop login poll if running — we got data
                 self.loginPollTimer?.invalidate()
                 self.loginPollTimer = nil
             default:
@@ -179,13 +166,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Start polling for credentials after user clicks login button
     func startLoginPoll() {
         loginPollTimer?.invalidate()
         var attempts = 0
         loginPollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
             attempts += 1
-            if attempts > 30 { timer.invalidate(); return }  // 60s timeout
+            if attempts > 30 { timer.invalidate(); return }
             if self?.api.oauthManager.hasValidToken() == true {
                 timer.invalidate()
                 self?.loginPollTimer = nil
@@ -194,37 +180,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Adjust refresh rate — delegates interval decision to FailureGate (single source of truth)
     private func adjustRefreshRate(for state: UsageState) {
         if case .loading = state { return }
         let interval = api.gate.suggestedInterval
-
         if let timer = refreshTimer, timer.timeInterval == interval { return }
         refreshTimer?.invalidate()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task { await self?.refresh() }
+            Task.detached { await self?.refresh() }
         }
     }
 
     private func updateMenuBarText() {
         guard let button = statusItem.button else { return }
-
         switch currentState {
         case .loading:
             button.title = "⏳ ..."
         case .loaded(let usage):
             let session = Int(usage.fiveHour?.utilization ?? 0)
             let weekly = Int(usage.sevenDay?.utilization ?? 0)
-
             let maxUtil = max(usage.fiveHour?.utilization ?? 0, usage.sevenDay?.utilization ?? 0)
             let color: NSColor
-            if maxUtil < 50 {
-                color = .systemGreen
-            } else if maxUtil < 80 {
-                color = .systemOrange
-            } else {
-                color = .systemRed
-            }
+            if maxUtil < 50 { color = .systemGreen }
+            else if maxUtil < 80 { color = .systemOrange }
+            else { color = .systemRed }
             let attrs: [NSAttributedString.Key: Any] = [
                 .foregroundColor: color,
                 .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
@@ -251,7 +229,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 state: state,
                 lastRefresh: refresh,
                 onRefresh: { [weak self] in
-                    Task { await self?.refresh(force: true) }  // Manual refresh bypasses throttle
+                    Task { await self?.refresh(force: true) }
                 },
                 onQuit: {
                     NSApp.terminate(nil)
@@ -261,7 +239,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             )
         )
-        // Let SwiftUI calculate the intrinsic content size
         let fittingSize = hostingController.sizeThatFits(in: NSSize(width: 320, height: 10000))
         popover.contentSize = NSSize(width: 320, height: min(fittingSize.height, 500))
         popover.contentViewController = hostingController
